@@ -1,0 +1,102 @@
+name: CI/CD Pipeline
+
+# EXPLANATION: This tells GitHub Actions when to run this workflow
+# - "push" to "main" branch means every time you push code to main
+# - "pull_request" means when someone creates a PR targeting main
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# EXPLANATION: Environment variables available to ALL jobs in this workflow
+# Using GHCR (GitHub Container Registry) which is ghcr.io
+env:
+  REGISTRY: ghcr.io
+  # This creates an image name like: ghcr.io/yourusername/fastapi-llm-inference
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # JOB 1: Run Tests
+  # EXPLANATION: This job checks that our code works before building/deploying
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # EXPLANATION: Checkout = download your code from GitHub to the runner
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # EXPLANATION: Install Python so we can run our tests
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      # EXPLANATION: Install our app's dependencies from requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r app/requirements.txt
+      
+      # EXPLANATION: Run pytest - if ANY test fails, the workflow stops here
+      # This prevents broken code from being deployed
+      - name: Run tests
+        run: |
+          pytest app/tests/ -v
+
+  # JOB 2: Build and Push Docker Image
+  # EXPLANATION: "needs: test" means this only runs if tests pass
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    # EXPLANATION: These permissions allow the workflow to push to GHCR
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # EXPLANATION: Log in to GitHub Container Registry using your GitHub token
+      # secrets.GITHUB_TOKEN is automatically provided by GitHub - no setup needed!
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      # EXPLANATION: Extract metadata for Docker tags
+      # This creates tags like: ghcr.io/user/repo:main and ghcr.io/user/repo:sha-abc123
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+      
+      # EXPLANATION: Build the Docker image and push it to GHCR
+      # "context: ./app" means use the Dockerfile in the app/ directory
+      # "tags" from metadata step above
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # JOB 3: Deploy to Render
+  # EXPLANATION: This will trigger Render to pull the new image and deploy it
+  # We'll add this in the next step after you set up Render
+  # deploy:
+  #   needs: build-and-push
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Trigger Render deployment
+  #       run: |
+  #         echo "Deployment step will be added after Render setup"
