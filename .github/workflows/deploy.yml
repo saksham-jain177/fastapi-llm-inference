@@ -91,12 +91,19 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   # JOB 3: Deploy to Render
-  # EXPLANATION: This will trigger Render to pull the new image and deploy it
-  # We'll add this in the next step after you set up Render
-  # deploy:
-  #   needs: build-and-push
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Trigger Render deployment
-  #       run: |
-  #         echo "Deployment step will be added after Render setup"
+  # EXPLANATION: This triggers Render to pull the new Docker image and redeploy
+  # "needs: build-and-push" means this only runs after image is successfully pushed
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    
+    steps:
+      # EXPLANATION: Render provides a "Deploy Hook" URL
+      # When we make an HTTP request to this URL, Render automatically:
+      # 1. Pulls the latest image from GHCR
+      # 2. Stops the old container
+      # 3. Starts a new container with the new image
+      - name: Trigger Render deployment
+        run: |
+          curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
+
