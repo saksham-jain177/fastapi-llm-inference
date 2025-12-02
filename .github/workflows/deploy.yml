@@ -78,7 +78,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
-            type=sha,prefix={{branch}}-
+            type=ref,event=tag
+            type=sha
       
       # EXPLANATION: Build the Docker image and push it to GHCR
       # "context: ./app" means use the Dockerfile in the app/ directory
