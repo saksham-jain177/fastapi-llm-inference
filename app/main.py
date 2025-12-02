@@ -7,6 +7,10 @@ app = FastAPI()
 class InferenceRequest(BaseModel):
     prompt: str
 
+@app.get("/")
+def read_root():
+    return {"message": "FastAPI LLM Inference API is running. Visit /docs for documentation."}
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
