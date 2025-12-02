@@ -13,6 +13,10 @@ def health_check():
 
 @app.post("/infer")
 def infer(request: InferenceRequest):
+    import os
+    if not os.getenv("API_KEY"):
+        raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
+
     # Mock LLM behavior
     responses = [
         "The sky is blue because of Rayleigh scattering.",
