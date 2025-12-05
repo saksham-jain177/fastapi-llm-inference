@@ -1,5 +1,22 @@
 fastapi
 uvicorn
 pytest
-requests
 httpx
+python-dotenv
+
+# ML Dependencies
+transformers>=4.36.0
+bitsandbytes>=0.41.0
+accelerate>=0.25.0
+torch>=2.1.0
+sentencepiece
+protobuf
+datasets
+peft>=0.7.0
+
+# RAG Dependencies
+tavily-python
+
+# Content Moderation
+better-profanity
+

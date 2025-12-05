@@ -30,3 +30,17 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# ML/Training Artifacts
+training/data/*.json
+training/training/
+training/lora-adapter*/
+training/*.pth
+training/*.pt
+*.safetensors
+checkpoints/
+*.bin
+
+# Hugging Face Cache
+.cache/
+huggingface/
