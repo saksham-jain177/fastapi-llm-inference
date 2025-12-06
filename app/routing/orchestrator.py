@@ -53,7 +53,7 @@ class Orchestrator:
         # 2. Routing & Execution
         
         # Path A: External Search (RAG)
-        if intent == "external_search":
+        if predicted_intent == "external_search":
             context = search_web_context(query)
             # Synthesize with reasoner (Ollama)
             final_response = self.reasoner.synthesize_with_context(query, context)
@@ -66,7 +66,7 @@ class Orchestrator:
             return response_data
             
         # Path B: Complex Reasoning (Chain of Thought)
-        elif intent == "complex_reasoning":
+        elif predicted_intent == "complex_reasoning":
             reasoning_result = self.reasoner.reason(query)
             
             response_data.update({
