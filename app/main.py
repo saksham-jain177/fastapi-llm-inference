@@ -264,3 +264,51 @@ Answer:"""
         raise HTTPException(status_code=500, detail=f"Smart routing failed: {str(e)}")
 
 
+@app.post("/infer-adaptive")
+def infer_adaptive(request: InferenceRequest):
+    """
+    Adaptive routing using Agentic RAG architecture.
+    
+    Orchestration Flow:
+    1. QueryAnalyzer: Extracts features & intent (Simple vs. Complex vs. External)
+    2. Rule Engine / LLM Adjudicator: Determines best strategy
+    3. Executor: Runs RAG, CoT Reasoning, or Domain Adapter
+    """
+    if not os.getenv("API_KEY"):
+        raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
+    
+    # Content moderation verification
+    from app.moderation.content_filter import get_moderator
+    moderator = get_moderator()
+    is_safe, reason = moderator.moderate(request.prompt)
+    if not is_safe:
+        raise HTTPException(status_code=400, detail=f"Content policy violation: {reason}")
+    
+    try:
+        # Use new Orchestrator
+        from app.routing.orchestrator import get_orchestrator
+        orchestrator = get_orchestrator()
+        
+        result = orchestrator.route_and_execute(request.prompt)
+        
+        return result
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Adaptive routing failed: {str(e)}")
+
+
+@app.get("/metrics")
+def metrics():
+    """
+    Prometheus metrics endpoint.
+    Returns metrics in Prometheus exposition format.
+    """
+    from app.metrics.prometheus import get_metrics
+    from fastapi.responses import Response
+    
+    metrics_data, content_type = get_metrics()
+    return Response(content=metrics_data, media_type=content_type)
+
+

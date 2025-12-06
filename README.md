@@ -8,13 +8,13 @@ LLM inference API with 4-bit quantization, LoRA fine-tuning, RAG, and intelligen
 
 **LoRA Fine-tuning**: Parameter-efficient fine-tuning on technical datasets with PEFT
 
+**Agentic RAG**: Hybrid architecture using Rule Engine + LLM Judge to route queries between internal models (Fast) and external retrieval (Accurate).
+
+**LoRA Fine-tuning**: Parameter-efficient fine-tuning on technical datasets with PEFT
+
 **RAG**: Real-time information retrieval via Tavily API for accurate, current responses
 
-**Smart Routing**: Confidence-based fallback from LoRA to RAG to minimize API costs
-
-**Content Moderation**: Profanity filter, harmful content detection, prompt injection protection
-
-**Production Ready**: FastAPI with comprehensive error handling, caching, rate limiting
+**Metrics**: Prometheus monitoring for latency, request count, and classification precision/recall.
 
 ## Quick Start
 
@@ -24,15 +24,15 @@ pip install -r app/requirements.txt
 
 # Configure environment
 cp app/.env.example app/.env
-# Edit app/.env: set API_KEY and TAVILY_API_KEY
+# Edit app/.env: set API_KEY and TAVILY_API_KEY. Optional: OLLAMA_BASE_URL.
 
 # Run server
 python -m uvicorn app.main:app --reload
 
-# Test endpoint
-curl -X POST http://localhost:8000/infer \
+# Test Adaptive Endpoint (Agentic RAG)
+curl -X POST http://localhost:8000/infer-adaptive \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Explain FastAPI"}'
+  -d '{"prompt": "Explain the impact of quantum computing on cryptography"}'
 ```
 
 ## API Endpoints
@@ -40,53 +40,26 @@ curl -X POST http://localhost:8000/infer \
 | Endpoint | Description | Use Case |
 |----------|-------------|----------|
 | `GET /health` | Health check | Monitoring |
-| `GET /model-info` | Model status, cache stats | Debugging |
-| `POST /infer` | Base quantized model | General inference |
-| `POST /infer-rag` | Tavily RAG | Factual, current queries |
-| `POST /infer-lora` | Fine-tuned LoRA adapter | Code generation, technical tasks |
-| `POST /infer-smart` | Intelligent routing | Production (cost-optimized) |
-
-**Request Format**:
-```json
-{
-  "prompt": "Your question here"
-}
-```
-
-**Response Format**:
-```json
-{
-  "response": "Model's answer",
-  "prompt_received": "Your question here",
-  "mode": "lora|rag|smart-lora|smart-rag"
-}
-```
-
-## Training LoRA Adapter
-
-```bash
-cd training
-
-# Download dataset (1000 samples)
-python prepare_dataset.py
-
-# Fine-tune adapter (~10 min on RTX 4050)
-python lora_train.py
-
-# Adapter saved to training/lora-adapter/
-```
+| `GET /metrics` | Prometheus Metrics | Observability |
+| `POST /infer-adaptive` | **Agentic RAG Router** | **Production Entrypoint** (Routes to best strategy) |
+| `POST /infer` | Base quantized model | Raw inference |
+| `POST /infer-rag` | Tavily RAG | Forced external search |
+| `POST /infer-lora` | LoRA Adapter | Forced adapter usage |
 
 ## Architecture
 
-```
-User Query
-    → Content Moderation
-    → Model Selection:
-        /infer       → Quantized Base Model
-        /infer-lora  → LoRA Adapter
-        /infer-rag   → Tavily API → Base Model
-        /infer-smart → LoRA → (if uncertain) → RAG
-    → Response
+```mermaid
+graph TD
+    User -->|/infer-adaptive| Orchestrator
+    Orchestrator -->|Query Analyzer| Intent{Intent?}
+    
+    Intent -->|High Confidence Code/Fact| Adapter[LoRA Adapter]
+    Intent -->|Complex Analysis| Reasoner[Ollama CoT]
+    Intent -->|Real-time Info| RAG[Tavily Search]
+    
+    Adapter --> Response
+    Reasoner --> Response
+    RAG --> Response
 ```
 
 ## Configuration
