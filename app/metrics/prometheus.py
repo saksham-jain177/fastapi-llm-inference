@@ -127,3 +127,20 @@ def get_metrics():
         Tuple of (metrics_text, content_type)
     """
     return generate_latest(), CONTENT_TYPE_LATEST
+
+
+def get_system_stats() -> dict:
+    """
+    Get simplified internal stats for the frontend dashboard.
+    """
+    stats = {
+        "active_requests": active_requests._value.get(),
+        "total_requests": sum(c._value.get() for c in requests_total.collect()[0].samples),
+        "total_errors": sum(s.value for s in requests_total.collect()[0].samples if s.labels['status'] == 'error'),
+        "cache_hits": sum(c._value.get() for c in cache_hits.collect()[0].samples) if cache_hits.collect() else 0,
+        "cache_misses": sum(c._value.get() for c in cache_misses.collect()[0].samples) if cache_misses.collect() else 0,
+        "adapter_usage": {
+             s.labels['domain']: s.value for s in adapter_usage.collect()[0].samples
+        } if adapter_usage.collect() else {}
+    }
+    return stats

@@ -18,6 +18,16 @@ app = FastAPI(
     redoc_url=None
 )
 
+# Enable CORS for Frontend
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 class InferenceRequest(BaseModel):
     prompt: str
 
@@ -110,6 +120,31 @@ def infer(request: InferenceRequest):
         raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
 
 
+@app.post("/infer-stream")
+def infer_stream(request: InferenceRequest):
+    """
+    Streaming endpoint: Yields tokens as they are generated using Server-Sent Events (SSE).
+    """
+    from sse_starlette.sse import EventSourceResponse
+    
+    if USE_MOCK:
+        # Mock streaming generator
+        async def mock_stream_generator():
+            import asyncio
+            mock_response = "This is a streaming response from the mock model."
+            for word in mock_response.split():
+                await asyncio.sleep(0.1)
+                yield {"data": word + " "}
+        return EventSourceResponse(mock_stream_generator())
+
+    from app.models.quantized import generate_stream
+    
+    def event_generator():
+        for token in generate_stream(request.prompt):
+            yield {"data": token}
+            
+    return EventSourceResponse(event_generator())
+
 
 @app.post("/infer-rag")
 def infer_rag(request: InferenceRequest):
@@ -192,76 +227,6 @@ def infer_lora(request: InferenceRequest):
         raise HTTPException(status_code=500, detail=f"LoRA inference failed: {str(e)}")
 
 
-@app.post("/infer-smart")
-def infer_smart(request: InferenceRequest):
-    """
-    Smart routing endpoint with confidence-based fallback:
-    1. Try LoRA model first (fast, trained on technical content)
-    2. If response seems uncertain/incomplete, fall back to RAG (accurate via Tavily)
-    
-    This minimizes Tavily API costs while maintaining accuracy.
-    """
-    if not os.getenv("API_KEY"):
-        raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
-    
-    # Content moderation
-    from app.moderation.content_filter import get_moderator
-    moderator = get_moderator()
-    is_safe, reason = moderator.moderate(request.prompt)
-    if not is_safe:
-        raise HTTPException(status_code=400, detail=f"Content policy violation: {reason}")
-    
-    try:
-        from app.models.lora import generate_lora_response
-        
-        # Try LoRA first
-        lora_response = generate_lora_response(request.prompt, max_new_tokens=200)
-        
-        # Simple confidence check (heuristic)
-        low_confidence = (
-            len(lora_response) < 20 or  # Too short
-            "I don't know" in lora_response.lower() or
-            "cannot" in lora_response.lower() or
-            "unsure" in lora_response.lower()
-        )
-        
-        if low_confidence and os.getenv("TAVILY_API_KEY"):
-            # Fall back to RAG for better accuracy
-            from app.rag.tavily_client import get_tavily_client
-            from app.models.quantized import generate_response
-            
-            tavily = get_tavily_client()
-            context = tavily.get_context(request.prompt, max_results=3)
-            
-            augmented_prompt = f"""Based on the following information, answer the question accurately:
-
-Context:
-{context}
-
-Question: {request.prompt}
-
-Answer:"""
-            
-            rag_response = generate_response(augmented_prompt, max_new_tokens=200)
-            
-            return {
-                "response": rag_response,
-                "prompt_received": request.prompt,
-                "mode": "smart-rag",
-                "fallback_reason": "low_confidence",
-                "context_sources": len(context.split("Source")) - 1
-            }
-        
-        # Return LoRA response if confident
-        return {
-            "response": lora_response,
-            "prompt_received": request.prompt,
-            "mode": "smart-lora",
-            "confidence": "high"
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Smart routing failed: {str(e)}")
 
 
 @app.post("/infer-adaptive")
@@ -310,5 +275,15 @@ def metrics():
     
     metrics_data, content_type = get_metrics()
     return Response(content=metrics_data, media_type=content_type)
+
+
+@app.get("/system-stats")
+async def system_stats():
+    """
+    Endpoint for frontend dashboard metrics.
+    Returns JSON of internal counters.
+    """
+    from app.metrics.prometheus import get_system_stats
+    return get_system_stats()
 
 

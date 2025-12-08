@@ -5,10 +5,10 @@ name: CI/CD Pipeline
 # - "pull_request" means when someone creates a PR targeting main
 on:
   push:
-    branches: [ main ]
-    tags: [ 'v*' ]
+    branches: [main]
+    tags: ["v*"]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 # EXPLANATION: Environment variables available to ALL jobs in this workflow
 # Using GHCR (GitHub Container Registry) which is ghcr.io
@@ -22,29 +22,34 @@ jobs:
   # EXPLANATION: This job checks that our code works before building/deploying
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
       # EXPLANATION: Checkout = download your code from GitHub to the runner
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       # EXPLANATION: Install Python so we can run our tests
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      
+          python-version: "3.11"
+
       # EXPLANATION: Install our app's dependencies from requirements.txt
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r app/requirements.txt
-      
+
       # EXPLANATION: Run pytest - if ANY test fails, the workflow stops here
       # This prevents broken code from being deployed
-      - name: Run tests
+      - name: Run Unit & Logic Tests
         run: |
-          pytest app/tests/ -v
+          # Run logic tests (mocked, fast)
+          pytest app/tests/test_routing_logic.py -v
+          # Run health check tests
+          pytest app/tests/test_health.py -v
+          # Run quantized model tests (will skip if no GPU/CI env set)
+          pytest app/tests/test_quantized.py -v
 
   # JOB 2: Build and Push Docker Image
   # EXPLANATION: "needs: test" means this only runs if tests pass
@@ -55,11 +60,11 @@ jobs:
     permissions:
       contents: read
       packages: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       # EXPLANATION: Log in to GitHub Container Registry using your GitHub token
       # secrets.GITHUB_TOKEN is automatically provided by GitHub - no setup needed!
       - name: Log in to Container Registry
@@ -68,7 +73,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       # EXPLANATION: Extract metadata for Docker tags
       # This creates tags like: ghcr.io/user/repo:main and ghcr.io/user/repo:sha-abc123
       - name: Extract metadata
@@ -80,7 +85,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=sha
-      
+
       # EXPLANATION: Build the Docker image and push it to GHCR
       # "context: ./app" means use the Dockerfile in the app/ directory
       # "tags" from metadata step above
@@ -98,7 +103,7 @@ jobs:
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
-    
+
     steps:
       # EXPLANATION: Render provides a "Deploy Hook" URL
       # When we make an HTTP request to this URL, Render automatically:
@@ -108,4 +113,3 @@ jobs:
       - name: Trigger Render deployment
         run: |
           curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
-

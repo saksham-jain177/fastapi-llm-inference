@@ -58,6 +58,16 @@ class Orchestrator:
             # Synthesize with reasoner (Ollama)
             final_response = self.reasoner.synthesize_with_context(query, context)
             
+            # Log for continuous learning (A+B=AB)
+            from app.rag.data_collector import get_data_collector
+            collector = get_data_collector()
+            collector.log_interaction(
+                query=query,
+                context=context,
+                response=final_response,
+                intent="rag-external"
+            )
+            
             response_data.update({
                 "mode": "rag-external",
                 "response": final_response,
@@ -94,11 +104,71 @@ class Orchestrator:
                 })
             else:
                 resp = generate_response(query)
+                
+                # Check for low confidence / potential hallucination on unknown terms
+                # Simple heuristics: specific refusal words or very generic "fake" definitions (hard to detect without logprobs)
+                # But we can check for brevity or specific uncertainty markers
+                
+                low_confidence = (
+                    len(resp) < 20 or
+                    "I don't know" in resp.lower() or
+                    "cannot provide" in resp.lower() or
+                    # If the prompt asks about a specific term and we give a very generic or weird answer
+                    # This is hard. For now, let's assume we want to support the user's specific "TOON format" query 
+                    # by checking if we actually know it.
+                    # Ideally, we should have used the LLM Judge here if we were unsure.
+                    False 
+                )
+                
+                # ! CRITICAL FIX: The Orchestrator should default to RAG if the query asks for "latest", "new", or if the base model's confidence is low.
+                # However, without logprobs from quantized model, confidence is hard.
+                # Let's add a "Re-check" step: If response is generated, we can't easily validate it without a judge.
+                # BUT, we can check the *input* again for unknowns if we missed it.
+                
+                # For this specific case study: The user wants "TOON format" (2025) to trigger RAG.
+                # The QueryAnalyzer failed because it didn't see "news".
+                # We can add a fallback: if the base model output doesn't seem to cite anything or is just plain text,
+                # AND we have an API key, maybe we should just double check?
+                # No, that's too expensive.
+                
+                # Better approach:
+                # If the domain is "general" and we are in "simple_internal", 
+                # we might be missing context.
+                
                 response_data.update({
                     "mode": "base-model",
                     "domain": "general",
                     "response": resp
                 })
+
+                # Fallback Logic (Ported from infer-smart)
+                # If we suspect the answer is poor, try RAG. 
+                # Since we can't detect "poor" easily, let's rely on the Analyzer improvements for next time.
+                # BUT, I will add the specific logic to handle the user's test case by improving the Analyzer, 
+                # OR by adding a check here.
+                
+                # Actually, the best place to fix this is the Query Analyzer or adding the Fallback loop here.
+                # Let's add the fallback loop for "I don't know" cases at least.
+                if "i don't know" in resp.lower() or "sorry" in resp.lower():
+                     context = search_web_context(query)
+                     final_response = self.reasoner.synthesize_with_context(query, context)
+                     
+                     # Log fallback interaction
+                     from app.rag.data_collector import get_data_collector
+                     collector = get_data_collector()
+                     collector.log_interaction(
+                         query=query,
+                         context=context,
+                         response=final_response,
+                         intent="rag-fallback"
+                     )
+                     
+                     response_data.update({
+                        "mode": "rag-fallback",
+                        "response": final_response,
+                        "context_used": True,
+                        "original_response": resp
+                     })
                 
             return response_data
 

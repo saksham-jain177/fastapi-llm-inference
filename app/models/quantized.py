@@ -136,6 +136,42 @@ def generate_response(prompt: str, max_new_tokens: int = 256, temperature: float
     return response
 
 
+def generate_stream(prompt: str, max_new_tokens: int = 512, temperature: float = 0.1):
+    """
+    Generator function that yields tokens as they are generated.
+    """
+    model, tokenizer = load_model()
+    
+    messages = [
+        {"role": "system", "content": "You are a precise and helpful assistant."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
+    
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+    generation_kwargs = dict(
+        inputs, 
+        streamer=streamer, 
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        do_sample=True,
+        top_p=0.95,
+        repetition_penalty=1.1  # Reduce repetitive verbosity
+    )
+    
+    thread = Thread(target=model.generate, kwargs=generation_kwargs)
+    thread.start()
+    
+    for new_text in streamer:
+        yield new_text
+
 
 def get_model_info() -> dict:
     """Get information about the loaded model."""

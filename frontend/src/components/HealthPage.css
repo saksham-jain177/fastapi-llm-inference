@@ -1,0 +1,253 @@
+/* Health Page Dashboard Styles */
+.health-page {
+  width: 100vw;
+  height: 100vh;
+  background: #0a0a0a; /* Deep black for dashboard feel */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #e0e0e0;
+  font-family: "Inter", sans-serif;
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.health-container {
+  background: #141414;
+  padding: 0;
+  border-radius: 16px;
+  width: 800px; /* Fixed width matching user preference context */
+  max-width: 95vw;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  border: 1px solid #333;
+  overflow: hidden; /* For header radius */
+  display: flex;
+  flex-direction: column;
+}
+
+.health-header {
+  background: #1f1f1f;
+  padding: 24px 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #333;
+}
+
+.title-group {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.health-header h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: -0.5px;
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.back-btn {
+  background: #333;
+  color: #aaa;
+  border: 1px solid #444;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.back-btn:hover {
+  background: #444;
+  color: #fff;
+  border-color: #555;
+}
+
+/* Metrics Grid */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  padding: 32px;
+  background: #141414;
+}
+
+.metric-card {
+  background: #1c1c1c;
+  padding: 24px;
+  border-radius: 12px;
+  border: 1px solid #2a2a2a;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: transform 0.2s, border-color 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  border-color: #444;
+}
+
+.metric-card .meta {
+  flex: 1;
+  width: 100%;
+}
+
+.metric-card label {
+  display: block;
+  font-size: 0.75rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  font-family: "Inter", monospace;
+}
+
+.metric-card .value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Segmented Progress Bars */
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #2a2a2a;
+  border-radius: 2px;
+  margin-top: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-bar .fill {
+  height: 100%;
+  /* Use CSS variable for color, fallback to green */
+  background-color: var(--bar-color, #4caf50);
+
+  /* Vertical Bars Effect */
+  -webkit-mask-image: linear-gradient(90deg, black 70%, transparent 70%);
+  -webkit-mask-size: 6px 100%;
+  mask-image: linear-gradient(90deg, black 70%, transparent 70%);
+  mask-size: 6px 100%;
+
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Dashboard Bottom Row */
+.dashboard-row {
+  display: flex;
+  gap: 16px;
+  padding: 0 32px 32px 32px;
+}
+
+.dashboard-panel {
+  flex: 1;
+  background: #1c1c1c;
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid #2a2a2a;
+}
+
+.dashboard-panel h4 {
+  margin: 0 0 16px 0;
+  font-size: 0.95rem;
+  color: #ccc;
+  border-bottom: 1px solid #333;
+  padding-bottom: 8px;
+}
+
+/* Lists */
+.adapter-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.adapter-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #2a2a2a;
+  font-size: 0.9rem;
+}
+
+.adapter-list li:last-child {
+  border-bottom: none;
+}
+
+.domain-id {
+  color: #4caf50;
+  font-weight: 500;
+}
+
+.usage-count {
+  color: #777;
+}
+
+/* System Info Panel */
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 0.9rem;
+}
+
+.info-row span:last-child {
+  color: #aaa;
+}
+
+.empty-state {
+  color: #555;
+  font-style: italic;
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 10px;
+}
+
+.loading-spinner,
+.error-container {
+  text-align: center;
+  color: #888;
+}
+
+.error-container h3 {
+  color: #ff5252;
+}
+
+.prometheus-link {
+  color: #2196f3;
+  text-decoration: none;
+  font-size: 0.85rem;
+  transition: color 0.2s;
+}
+
+.prometheus-link:hover {
+  color: #64b5f6;
+  text-decoration: underline;
+}

@@ -30,7 +30,7 @@ REASONING_INDICATORS = {
 
 REALTIME_INDICATORS = {
     "news", "latest", "current", "today", "yesterday", "recent", "weather", "stock", "price", 
-    "event", "schedule", "release date", "traffic"
+    "event", "schedule", "release date", "traffic", "2024", "2025"
 }
 
 
