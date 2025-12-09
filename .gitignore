@@ -44,3 +44,6 @@ checkpoints/
 # Hugging Face Cache
 .cache/
 huggingface/
+
+# Collected Data Logs
+training/collected_data/
