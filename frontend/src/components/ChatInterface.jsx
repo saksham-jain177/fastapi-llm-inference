@@ -1,9 +1,12 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useNavigate } from 'react-router-dom';
 import { inferAdaptive, STREAM_ENDPOINT } from '../api';
 import './ChatInterface.css';
+
+const API_BASE_URL = 'http://localhost:8000';
 
 const ChatInterface = () => {
   const [messages, setMessages] = useState([
@@ -49,6 +52,56 @@ const ChatInterface = () => {
       setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   };
 
+  const copyToClipboard = async (text) => {
+      try {
+          await navigator.clipboard.writeText(text);
+          // Optional: Show toast
+      } catch (err) {
+          console.error('Failed to copy:', err);
+      }
+  };
+
+  const submitFeedback = async (msgIndex, rating) => {
+      const msg = messages[msgIndex];
+      if (msg.role !== 'assistant') return;
+      
+      // Find the PREVIOUS user message (scan backwards)
+      let query = '';
+      for (let i = msgIndex - 1; i >= 0; i--) {
+          if (messages[i].role === 'user') {
+              query = messages[i].content;
+              break;
+          }
+      }
+      
+      if (!query) return; // Should not happen in normal flow
+      
+      try {
+          await fetch(`${API_BASE_URL}/feedback`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  query: query,
+                  response: msg.content,
+                  rating: rating,
+                  model_mode: msg.meta?.mode || mode
+              })
+          });
+          
+          // Visual feedback update (optimistic UI)
+          setMessages(prev => {
+              const newMsgs = [...prev];
+              newMsgs[msgIndex] = { 
+                  ...newMsgs[msgIndex], 
+                  feedback: rating === 1 ? 'up' : 'down' 
+              };
+              return newMsgs;
+          });
+      } catch (err) {
+          console.error("Feedback failed:", err);
+      }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim()) return;
@@ -60,7 +113,6 @@ const ChatInterface = () => {
 
     try {
       if (mode === 'stream') {
-        // SSE Streaming Implementation
         const response = await fetch(STREAM_ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -69,7 +121,6 @@ const ChatInterface = () => {
 
         if (!response.ok) throw new Error('Stream failed');
 
-        // Create a placeholder message for the assistant
         setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
         
         const reader = response.body.getReader();
@@ -86,10 +137,9 @@ const ChatInterface = () => {
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
                     const data = line.slice(6);
-                    if (data === '[DONE]') break; // Standard SSE convention, though our backend might just close stream
+                    if (data === '[DONE]') break;
                     assistantResponse += data;
                     
-                    // Update the last message (streaming effect)
                     setMessages(prev => {
                         const newMsgs = [...prev];
                         newMsgs[newMsgs.length - 1].content = assistantResponse;
@@ -100,11 +150,10 @@ const ChatInterface = () => {
         }
 
       } else {
-        // Adaptive Mode (Standard JSON)
         const result = await inferAdaptive(input);
         const assistantMsg = { 
             role: 'assistant', 
-            content: result.response || result.message, // Fallback
+            content: result.response || result.message,
             meta: {
                 mode: result.mode,
                 domain: result.domain,
@@ -132,14 +181,95 @@ const ChatInterface = () => {
             <div className={`message-bubble ${msg.role}`}>
               {msg.meta && (
                 <div className="meta-badge">
-                  {msg.meta.mode} {msg.meta.context_used ? '📚' : ''}
+                  {msg.meta.mode.charAt(0).toUpperCase() + msg.meta.mode.slice(1)} 
+                  {msg.meta.context_used && (
+                      <span className="icon" title="RAG Context Used">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginLeft: '4px'}}>
+                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                        </svg>
+                      </span>
+                  )}
                 </div>
               )}
-              <ReactMarkdown>{msg.content}</ReactMarkdown>
+              
+              <ReactMarkdown
+                components={{
+                  code({node, inline, className, children, ...props}) {
+                    const match = /language-(\w+)/.exec(className || '')
+                    return !inline && match ? (
+                      <SyntaxHighlighter
+                        style={vscDarkPlus}
+                        language={match[1]}
+                        PreTag="div"
+                        customStyle={{ 
+                            margin: 0, 
+                            borderRadius: '8px', 
+                            background: '#1e1e1e' 
+                        }}
+                        {...props}
+                      >
+                        {String(children).replace(/\n$/, '')}
+                      </SyntaxHighlighter>
+                    ) : (
+                      <code className={className} {...props}>
+                        {children}
+                      </code>
+                    )
+                  }
+                }}
+              >
+                {msg.content}
+              </ReactMarkdown>
+
+              {/* Message Actions */}
+              {msg.role === 'assistant' && (
+                  <div className="message-actions">
+                      <button 
+                          onClick={() => copyToClipboard(msg.content)} 
+                          data-tooltip="Copy"
+                          className="action-btn"
+                      >
+                          {/* Copy Icon */}
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                          </svg>
+                      </button>
+                      <button 
+                          onClick={() => submitFeedback(index, 1)} 
+                          className={`action-btn ${msg.feedback === 'up' ? 'active' : ''}`}
+                          data-tooltip="Helpful"
+                          disabled={!!msg.feedback} /* Strict Guardrail: One vote per message */
+                          style={!!msg.feedback ? { cursor: 'not-allowed', opacity: msg.feedback === 'up' ? 1 : 0.3 } : {}}
+                      >
+                          {/* Thumbs Up */}
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path>
+                          </svg>
+                      </button>
+                      <button 
+                          onClick={() => submitFeedback(index, -1)} 
+                          className={`action-btn ${msg.feedback === 'down' ? 'active' : ''}`}
+                          data-tooltip="Not Helpful"
+                          disabled={!!msg.feedback} /* Strict Guardrail: One vote per message */
+                          style={!!msg.feedback ? { cursor: 'not-allowed', opacity: msg.feedback === 'down' ? 1 : 0.3 } : {}}
+                      >
+                          {/* Thumbs Down */}
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path>
+                          </svg>
+                      </button>
+                  </div>
+              )}
             </div>
           </div>
         ))}
-        {isLoading && mode !== 'stream' && <div className="loading">Thinking...</div>}
+        {isLoading && mode !== 'stream' && (
+            <div className="system-message left-align">
+                 <div className="loading">Thinking</div>
+            </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 

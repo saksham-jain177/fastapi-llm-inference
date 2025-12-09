@@ -312,10 +312,200 @@ body.light-theme .mode-select {
   border-radius: 4px;
   font-family: monospace;
 }
+/* Code Block Styles - Seamless Integration */
+/* Reset inline code styles when inside pre blocks to avoid double background */
+.message-bubble pre code,
+.message-bubble div[class*="language-"] code {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  color: inherit !important;
+  box-shadow: none !important;
+}
+
+/* Code Block Styles - Seamless Integration */
 .message-bubble pre {
-  background: rgba(0, 0, 0, 0.3);
-  padding: 10px;
+  background: transparent !important; /* Remove inner box background */
+  padding: 0 !important;
   border-radius: 8px;
-  overflow-x: auto;
+  overflow: hidden; /* Ensure rounded corners clip the highlighter */
   margin: 10px 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+body.light-theme .message-bubble pre {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* Loading Animation "Thinking..." */
+.system-message.left-align {
+  display: flex;
+  justify-content: flex-start;
+  padding-left: 1rem;
+  width: 100%;
+}
+
+.loading {
+  color: var(--text-color);
+  font-style: italic;
+  opacity: 0.7;
+  position: relative;
+  padding-right: 1.5ch; /* Space for dots */
+}
+
+.loading::after {
+  content: " .";
+  animation: dots 1.5s steps(4, end) infinite;
+  position: absolute;
+}
+
+@keyframes dots {
+  0%,
+  20% {
+    content: "";
+  }
+  40% {
+    content: ".";
+  }
+  60% {
+    content: "..";
+  }
+  80%,
+  100% {
+    content: "...";
+  }
+}
+
+/* Message Actions (Copy & Feedback) */
+.message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 8px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+/* Message Actions (Copy & Feedback) */
+.message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 8px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.message-bubble:hover .message-actions {
+  opacity: 1;
+}
+
+.action-btn {
+  background: transparent;
+  border: none !important; /* Force no border */
+  color: var(--text-color);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  font-size: 1rem;
+  transition: all 0.2s;
+  opacity: 0.6;
+  position: relative; /* For Tooltip Positioning */
+  outline: none !important; /* Remove blue focus ring */
+  box-shadow: none !important;
+}
+
+/* Remove Transform/Scale and ensure no border on hover */
+.action-btn:hover {
+  background: transparent;
+  opacity: 1;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Remove Focus Ring completely */
+.action-btn:focus,
+.action-btn:active,
+.action-btn:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+  background: transparent !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* SVG Glow Effect (White Glow for Dark Mode) */
+.action-btn:hover svg {
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.8));
+}
+
+.action-btn.active {
+  color: #4caf50;
+  opacity: 1;
+  /* Ensure no border when active */
+  border: none !important;
+  background: transparent !important;
+  outline: none !important;
+}
+
+.action-btn.active[data-tooltip="Not Helpful"] {
+  color: #f44336;
+}
+
+/* Custom CSS Tooltip (Appears Above) */
+.action-btn[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 110%; /* Move up slightly to avoid overlap */
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  background: #333;
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  opacity: 0;
+  animation: fadeIn 0.2s forwards;
+  pointer-events: none;
+  border: 1px solid #444;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  z-index: 100 !important; /* Force high z-index */
+}
+
+/* Hide tooltip when button is disabled */
+.action-btn[disabled]:hover::after {
+  display: none !important;
+}
+
+@keyframes fadeIn {
+  to {
+    opacity: 1;
+  }
+}
+
+/* Light Theme Overrides */
+body.light-theme .message-actions {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+body.light-theme .action-btn {
+  color: #555;
+}
+
+body.light-theme .action-btn:hover svg {
+  /* Dark Glow for Light Mode */
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.5));
+}
+
+body.light-theme .action-btn[data-tooltip]:hover::after {
+  background: #fff;
+  color: #333;
+  border-color: #ccc;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }

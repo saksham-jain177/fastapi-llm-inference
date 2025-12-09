@@ -80,7 +80,7 @@ def generate_response(prompt: str, max_new_tokens: int = 256, temperature: float
     
     # Format prompt for Qwen chat template
     messages = [
-        {"role": "system", "content": "You are a helpful and accurate AI assistant. Provide concise, factual responses."},
+        {"role": "system", "content": "You are a helpful and accurate AI assistant. Provide concise, factual responses. When writing code, ensure it is self-contained and does not rely on external files unless explicitly asked."},
         {"role": "user", "content": prompt}
     ]
     
@@ -143,7 +143,7 @@ def generate_stream(prompt: str, max_new_tokens: int = 512, temperature: float =
     model, tokenizer = load_model()
     
     messages = [
-        {"role": "system", "content": "You are a precise and helpful assistant."},
+        {"role": "system", "content": "You are a precise and helpful assistant. When writing code, ensure it is self-contained and does not rely on external files unless explicitly asked."},
         {"role": "user", "content": prompt}
     ]
     

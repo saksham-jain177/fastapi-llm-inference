@@ -37,14 +37,14 @@ curl -X POST http://localhost:8000/infer-adaptive \
 
 ## API Endpoints
 
-| Endpoint | Description | Use Case |
-|----------|-------------|----------|
-| `GET /health` | Health check | Monitoring |
-| `GET /metrics` | Prometheus Metrics | Observability |
+| Endpoint               | Description            | Use Case                                            |
+| ---------------------- | ---------------------- | --------------------------------------------------- |
+| `GET /health`          | Health check           | Monitoring                                          |
+| `GET /metrics`         | Prometheus Metrics     | Observability                                       |
 | `POST /infer-adaptive` | **Agentic RAG Router** | **Production Entrypoint** (Routes to best strategy) |
-| `POST /infer` | Base quantized model | Raw inference |
-| `POST /infer-rag` | Tavily RAG | Forced external search |
-| `POST /infer-lora` | LoRA Adapter | Forced adapter usage |
+| `POST /infer`          | Base quantized model   | Raw inference                                       |
+| `POST /infer-rag`      | Tavily RAG             | Forced external search                              |
+| `POST /infer-lora`     | LoRA Adapter           | Forced adapter usage                                |
 
 ## Architecture
 
@@ -52,11 +52,11 @@ curl -X POST http://localhost:8000/infer-adaptive \
 graph TD
     User -->|/infer-adaptive| Orchestrator
     Orchestrator -->|Query Analyzer| Intent{Intent?}
-    
+
     Intent -->|High Confidence Code/Fact| Adapter[LoRA Adapter]
     Intent -->|Complex Analysis| Reasoner[Ollama CoT]
     Intent -->|Real-time Info| RAG[Tavily Search]
-    
+
     Adapter --> Response
     Reasoner --> Response
     RAG --> Response
@@ -67,7 +67,6 @@ graph TD
 **Environment Variables** (`app/.env`):
 
 - `API_KEY`: API authentication
-- `USE_MOCK`: Use mock responses (CI/staging)
 - `TAVILY_API_KEY`: Tavily RAG API key
 
 ## Tech Stack
@@ -82,6 +81,7 @@ graph TD
 ## CI/CD
 
 Automated pipeline via GitHub Actions:
+
 - Run tests on push
 - Build Docker image
 - Deploy to staging (auto)
@@ -92,14 +92,17 @@ See `.github/workflows/deploy.yml` for details.
 ## Performance
 
 **Base Quantized Model**:
+
 - Memory: ~2GB VRAM (4-bit quantization)
 - Speed: ~1.5 tokens/sec (RTX 4050, CPU fallback supported)
 
 **LoRA Adapter**:
+
 - Training: 10-15 min (1000 samples, 1 epoch)
 - Inference: Same as base (adapter overhead <5%)
 
 **Smart Routing**:
+
 - Cache hit rate: 33%+ (reduces Tavily costs)
 - LoRA-first strategy: 70% queries answered without external API
 

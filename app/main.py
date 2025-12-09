@@ -57,9 +57,6 @@ def health_check():
 @app.get("/model-info")
 def model_info():
     """Return information about the loaded model and RAG system."""
-    if USE_MOCK:
-        return {"mode": "mock", "message": "Using mocked inference (USE_MOCK=true)"}
-    
     info = {}
     
     # Model info
@@ -287,3 +284,56 @@ async def system_stats():
     return get_system_stats()
 
 
+class FeedbackRequest(BaseModel):
+    query: str
+    response: str
+    rating: int  # 1 for upvote, -1 for downvote
+    model_mode: str
+
+
+# Simple In-Memory Rate Limiter
+from collections import defaultdict
+import time
+from fastapi import Request
+
+# Store last request time per IP
+_rate_limit_store = defaultdict(float)
+
+@app.post("/feedback")
+def submit_feedback(feedback: FeedbackRequest, request: Request):
+    """
+    Log user feedback for RLHF (Reinforcement Learning from Human Feedback).
+    This data is used to align the model with user preferences (DPO/PPO).
+    
+    Guardian: Rate limited to 1 request per 2 seconds per IP to prevent spam.
+    """
+    try:
+        # 1. Rate Limiting Check
+        client_ip = request.client.host
+        current_time = time.time()
+        last_request = _rate_limit_store[client_ip]
+        
+        if current_time - last_request < 2.0:
+            # Silently ignore spam or return 429 (Silent is safer for UI not to break)
+            return {"status": "ignored", "message": "Rate limit exceeded"}
+        
+        _rate_limit_store[client_ip] = current_time
+
+        # 2. Log Data
+        from app.rag.data_collector import get_data_collector
+        collector = get_data_collector()
+        
+        # Log specifically as optimization preference
+        collector.log_interaction(
+            query=feedback.query,
+            context="User Feedback", 
+            response=feedback.response,
+            intent=f"feedback_{'positive' if feedback.rating > 0 else 'negative'}",
+            feedback=str(feedback.rating)
+        )
+        return {"status": "recorded", "message": "Feedback saved for training"}
+    except Exception as e:
+        # logger.error(f"Feedback log error: {e}") # Logger not defined in scope, use print or ignore
+        print(f"Feedback log error: {e}")
+        # Don't block the UI if logging fails
+        return {"status": "error", "message": str(e)}
