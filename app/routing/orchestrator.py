@@ -1,20 +1,23 @@
 """
 Routing Orchestrator.
  Coordinates analysis, retrieval (RAG), and inference strategies.
+ 
+ Depends only on abstract Reasoner interface. Backend selection is deferred to runtime via factory.
 """
 
 from app.routing.query_analyzer import get_query_analyzer
-from app.routing.reasoner import get_ollama_reasoner
+from app.reasoners.factory import get_reasoner
 from app.models.adapter_manager import get_adapter_manager
-from app.models.quantized import generate_response
-from app.rag.retrieval import search_web_context  # Assuming this exists from Phase 2
+from app.rag.retrieval import search_web_context
 import time
+
 
 class Orchestrator:
     def __init__(self):
         self.analyzer = get_query_analyzer()
-        self.reasoner = get_ollama_reasoner()
+        self.reasoner = get_reasoner()  # Factory-provided, interface-only
         self.adapter_mgr = get_adapter_manager()
+
         
     def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
         """
@@ -108,33 +111,20 @@ class Orchestrator:
                 from app.models.calibration import get_confidence_threshold
                 from app.routing.retrieval_gate import get_retrieval_gate
                 from app.constants import CANONICAL_REFUSAL
-                from app.models.quantized import load_model
                 from app.metrics.prometheus import gate_decision_total, hallucination_counter, refusal_counter, inference_latency
                 
                 start_time = time.time()
                 print(f"\n🧠 Epistemic Gating for: '{query}'")
                 
-                # Prepare generate function for confidence estimator
-                model, tokenizer = load_model()
-                
+                # Use reasoner interface for confidence estimation
                 def generate_fn(q: str, temperature: float = 0.1, max_new_tokens: int = 50) -> str:
-                    """Wrapper for confidence estimation."""
-                    inputs = tokenizer(q, return_tensors="pt").to(model.device)
-                    outputs = model.generate(
-                        **inputs,
-                        max_new_tokens=max_new_tokens,
-                        temperature=temperature,
-                        do_sample=temperature > 0
-                    )
-                    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-                    # Clean up prompt echo
-                    if "User:" in response:
-                        response = response.split("Assistant:")[-1].strip()
-                    return response
+                    """Wrapper for confidence estimation using the abstract reasoner."""
+                    return self.reasoner.infer(q)
                 
                 # Estimate confidence (includes perturbation check)
                 estimator = get_confidence_estimator()
                 draft_response, confidence = estimator.estimate_confidence(query, generate_fn)
+
                 
                 # Get auto-calibrated threshold
                 threshold = get_confidence_threshold()

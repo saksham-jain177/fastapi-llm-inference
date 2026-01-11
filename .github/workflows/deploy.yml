@@ -46,12 +46,12 @@ jobs:
           uv pip install --system .
           uv pip install --system ".[dev]"
 
-      # EXPLANATION: Run pytest in MOCKED mode - if ANY test fails, the workflow stops here
-      - name: Run Unit & Gate Tests (Mocked)
+      # EXPLANATION: Run pytest in hardware-independent mode - if ANY test fails, the workflow stops here
+      - name: Run Unit & Gate Tests (Hardware-Independent)
         env:
-          USE_MOCKED_MODELS: "true"
+          USE_DETERMINISTIC_INFERENCE: "true"
         run: |
-          # 1. New Epistemic Gate Verification
+          # 1. Epistemic Gate Verification
           pytest tests/test_epistemic_gate.py -v
           # 2. Metrics Invariant Contract
           pytest tests/test_metrics.py -v

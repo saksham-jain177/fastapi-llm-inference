@@ -19,8 +19,8 @@ LLM inference API with 4-bit quantization, LoRA fine-tuning, RAG, and intelligen
 ## Quick Start
 
 ```bash
-# Install dependencies
-pip install -r app/requirements.txt
+# Install dependencies (using uv for deterministic builds)
+uv pip sync uv.lock
 
 # Configure environment
 cp app/.env.example app/.env
@@ -29,10 +29,20 @@ cp app/.env.example app/.env
 # Run server
 python -m uvicorn app.main:app --reload
 
+# Or use the dev orchestrator (starts full stack)
+python dev.py
+
 # Test Adaptive Endpoint (Agentic RAG)
 curl -X POST http://localhost:8000/infer-adaptive \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Explain the impact of quantum computing on cryptography"}'
+```
+
+## Testing (Hardware-Independent)
+
+```bash
+# Run tests without GPU or Ollama (CI mode)
+USE_DETERMINISTIC_INFERENCE=true pytest tests/ -v
 ```
 
 ## API Endpoints
