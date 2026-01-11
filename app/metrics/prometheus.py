@@ -55,6 +55,30 @@ cache_misses = Counter(
     ['cache_type']
 )
 
+# Epistemic Gating Metrics
+gate_decision_total = Counter(
+    'gate_decision_total',
+    'Total count of epistemic gate decisions',
+    ['type'] # answer, search, refuse
+)
+
+hallucination_counter = Counter(
+    'hallucination_counter_total',
+    'Count of detected potential hallucinations'
+)
+
+refusal_counter = Counter(
+    'refusal_counter_total',
+    'Count of model refusals / abstentions'
+)
+
+# Inference specific latency (distinct from request latency)
+inference_latency = Histogram(
+    'inference_latency_seconds',
+    'Internal model inference latency',
+    ['mode'] # confident, search, fallback
+)
+
 # Confidence scores
 classification_confidence = Histogram(
     'llm_classification_confidence',

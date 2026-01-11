@@ -35,26 +35,46 @@ def get_bnb_config() -> BitsAndBytesConfig:
     )
 
 
+USE_MOCKED_MODELS = os.getenv("USE_MOCKED_MODELS", "false").lower() == "true"
+
+class MockModel:
+    def __init__(self):
+        self.device = torch.device("cpu")
+        self.dtype = torch.float32
+
+    def generate(self, inputs, **kwargs):
+        # Deterministic fake response for "test" query or anything else
+        # Return a tensor of token IDs. 
+        # For simplicity, let's return some high-frequency tokens.
+        return torch.tensor([[100, 101, 102]])
+
 def load_model():
     """
     Load the quantized model and tokenizer.
-    This is called once at startup and cached globally.
+    If USE_MOCKED_MODELS is true, returns a mock model.
     """
     global _model, _tokenizer
     
     if _model is not None and _tokenizer is not None:
         return _model, _tokenizer
+
+    # Always load real tokenizer (it's fast and CPU-based)
+    if _tokenizer is None:
+        print(f"Loading tokenizer: {MODEL_NAME}")
+        _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+
+    if USE_MOCKED_MODELS:
+        print("🛠️ Entering Mocked Model Mode (No GPU required)")
+        _model = MockModel()
+        return _model, _tokenizer
     
     print(f"Loading quantized model: {MODEL_NAME}")
-    
-    # Load tokenizer
-    _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     
     # Load model with 4-bit quantization
     _model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         quantization_config=get_bnb_config(),
-        device_map="auto",  # Automatically distribute across available devices
+        device_map="auto",
         trust_remote_code=True,
     )
     
