@@ -251,3 +251,5 @@
   color: #64b5f6;
   text-decoration: underline;
 }
+
+.logs-btn { background: #FF9800; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: all 0.2s; } .logs-btn:hover { background: #FB8C00; transform: scale(1.05); }

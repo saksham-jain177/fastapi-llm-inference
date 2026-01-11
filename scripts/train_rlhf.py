@@ -29,28 +29,76 @@ def load_data():
 
 def prepare_kto_dataset(raw_data):
     """
-    Prepare data for KTO (Kahneman-Tversky Optimization).
-    KTO is superior to DPO for this use case because we only have 
-    single-point feedback (Upvote/Downvote), not pairs.
+    Prepare data for KTO with corrected abstention rewards.
+    
+    Prevents leakage by:
+    - Only rewarding ACTUAL abstentions (not wrong answers marked "should_refuse")
+    - Penalizing answers that should have refused
     
     Format required:
     - prompt: str
     - completion: str
-    - label: bool (True=Good/Upvote, False=Bad/Downvote)
+    - label: bool (True=Good, False=Bad)
     """
+    from app.constants import CANONICAL_REFUSAL
+    
     processed = []
     for entry in raw_data:
-        # feedback is '1' (Up) or '-1' (Down)
-        rating = int(entry.get("feedback", 0))
-        if rating == 0:
+        feedback_label = entry.get("feedback_label")
+        response = entry.get("response", "")
+        
+        if not feedback_label:
+            # Old format fallback (binary feedback)
+            rating = int(entry.get("feedback", 0))
+            if rating == 0:
+                continue
+            processed.append({
+                "prompt": entry["query"],
+                "completion": response,
+                "label": rating > 0,
+                "context": entry.get("context", "")
+            })
             continue
-            
-        processed.append({
-            "prompt": entry["query"],
-            "completion": entry["response"],
-            "label": rating > 0, # True if upvoted
-            "context": entry.get("context", "") # Optional context
-        })
+        
+        # Check if model actually abstained
+        model_abstained = (response.strip() == CANONICAL_REFUSAL)
+        
+        # Label: correct
+        if feedback_label == "correct":
+            processed.append({
+                "prompt": entry["query"],
+                "completion": response,
+                "label": True,  # Positive
+                "context": entry.get("context", "")
+            })
+        
+        # Label: should_have_refused
+        elif feedback_label == "should_have_refused":
+            if model_abstained:
+                # Model correctly refused - REWARD
+                processed.append({
+                    "prompt": entry["query"],
+                    "completion": CANONICAL_REFUSAL,
+                    "label": True,  # Positive - teaches refusal
+                    "context": entry.get("context", "")
+                })
+            else:
+                # Model answered when it should have refused - PENALIZE
+                processed.append({
+                    "prompt": entry["query"],
+                    "completion": response,
+                    "label": False,  # Negative - punish overconfidence
+                    "context": entry.get("context", "")
+                })
+        
+        # Label: incorrect
+        elif feedback_label == "incorrect":
+            processed.append({
+                "prompt": entry["query"],
+                "completion": response,
+                "label": False,  # Negative
+                "context": entry.get("context", "")
+            })
     
     return processed
 

@@ -14,7 +14,6 @@ const ChatInterface = () => {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [mode, setMode] = useState('adaptive'); // 'adaptive' or 'stream'
   const [theme, setTheme] = useState('dark');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -61,11 +60,21 @@ const ChatInterface = () => {
       }
   };
 
-  const submitFeedback = async (msgIndex, rating) => {
+  const submitFeedback = async (msgIndex, label) => {
       const msg = messages[msgIndex];
       if (msg.role !== 'assistant') return;
       
-      // Find the PREVIOUS user message (scan backwards)
+      // OPTIMISTIC UI UPDATE: Update state immediately before API call
+      setMessages(prev => {
+          const newMsgs = [...prev];
+          newMsgs[msgIndex] = { 
+              ...newMsgs[msgIndex], 
+              feedback: label  // 'correct', 'incorrect', or 'should_have_refused'
+          };
+          return newMsgs;
+      });
+      
+      // Find query (scan backwards)
       let query = '';
       for (let i = msgIndex - 1; i >= 0; i--) {
           if (messages[i].role === 'user') {
@@ -74,7 +83,7 @@ const ChatInterface = () => {
           }
       }
       
-      if (!query) return; // Should not happen in normal flow
+      if (!query) return; 
       
       try {
           await fetch(`${API_BASE_URL}/feedback`, {
@@ -83,22 +92,23 @@ const ChatInterface = () => {
               body: JSON.stringify({
                   query: query,
                   response: msg.content,
-                  rating: rating,
-                  model_mode: msg.meta?.mode || mode
+                  label: label,  // New schema: 'correct', 'incorrect', 'should_have_refused'
+                  model_mode: msg.meta?.mode || 'adaptive',
+                  confidence: msg.meta?.confidence || null
               })
-          });
-          
-          // Visual feedback update (optimistic UI)
-          setMessages(prev => {
-              const newMsgs = [...prev];
-              newMsgs[msgIndex] = { 
-                  ...newMsgs[msgIndex], 
-                  feedback: rating === 1 ? 'up' : 'down' 
-              };
-              return newMsgs;
           });
       } catch (err) {
           console.error("Feedback failed:", err);
+          // Revert on error
+          setMessages(prev => {
+            const newMsgs = [...prev];
+            if (newMsgs[msgIndex]) {
+                 const updated = { ...newMsgs[msgIndex] };
+                 delete updated.feedback;
+                 newMsgs[msgIndex] = updated;
+            }
+            return newMsgs;
+          });
       }
   };
 
@@ -112,58 +122,27 @@ const ChatInterface = () => {
     setIsLoading(true);
 
     try {
-      if (mode === 'stream') {
-        const response = await fetch(STREAM_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: input })
-        });
-
-        if (!response.ok) throw new Error('Stream failed');
-
-        setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-        
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let assistantResponse = '';
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
-            
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const data = line.slice(6);
-                    if (data === '[DONE]') break;
-                    assistantResponse += data;
-                    
-                    setMessages(prev => {
-                        const newMsgs = [...prev];
-                        newMsgs[newMsgs.length - 1].content = assistantResponse;
-                        return newMsgs;
-                    });
-                }
-            }
-        }
-
-      } else {
-        const result = await inferAdaptive(input);
-        const assistantMsg = { 
-            role: 'assistant', 
-            content: result.response || result.message,
-            meta: {
-                mode: result.mode,
-                domain: result.domain,
-                context_used: result.context_used
-            }
-        };
-        setMessages(prev => [...prev, assistantMsg]);
+      const data = await inferAdaptive(input);
+      console.log('API Response:', data); // Debug log
+      
+      if (!data || !data.response) {
+        throw new Error('Invalid response structure');
       }
-    } catch (err) {
-      setMessages(prev => [...prev, { role: 'error', content: `Error: ${err.message}` }]);
+      
+      const assistantMsg = { 
+        role: 'assistant', 
+        content: data.response,
+        meta: {
+          mode: data.mode || 'adaptive',
+          source: data.source || 'unknown',
+          context_used: data.context_used || false
+        }
+      };
+      
+      setMessages(prev => [...prev, assistantMsg]);
+    } catch (error) {
+      console.error('Frontend error:', error);
+      setMessages(prev => [...prev, { role: 'error', content: `Error: ${error.message}` }]);
     } finally {
       setIsLoading(false);
     }
@@ -179,7 +158,7 @@ const ChatInterface = () => {
         {messages.map((msg, index) => (
           <div key={index} className={`message ${msg.role}`}>
             <div className={`message-bubble ${msg.role}`}>
-              {msg.meta && (
+              {msg.meta && msg.meta.mode && (
                 <div className="meta-badge">
                   {msg.meta.mode.charAt(0).toUpperCase() + msg.meta.mode.slice(1)} 
                   {msg.meta.context_used && (
@@ -265,7 +244,7 @@ const ChatInterface = () => {
             </div>
           </div>
         ))}
-        {isLoading && mode !== 'stream' && (
+        {isLoading && (
             <div className="system-message left-align">
                  <div className="loading">Thinking</div>
             </div>
@@ -288,15 +267,6 @@ const ChatInterface = () => {
       </div>
 
       <div className="chat-controls">
-        <select 
-            className="mode-select" 
-            value={mode} 
-            onChange={(e) => setMode(e.target.value)}
-            title="Select Inference Mode"
-        >
-            <option value="adaptive" title="Uses RAG & Tools for complex queries">Adaptive Routing</option>
-            <option value="stream" title="Fast, token-by-token generation">Real-time Stream</option>
-        </select>
         <button className="health-btn" onClick={() => navigate('/health')} title="View System Health Stats">
             <span className="health-dot"></span> Health
         </button>
