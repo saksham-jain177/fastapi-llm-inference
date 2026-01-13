@@ -32,7 +32,7 @@ active_requests = Gauge(
 domain_classifications = Counter(
     'llm_domain_classifications_total',
     'Domain classification counts',
-    ['domain', 'method']  # method: semantic/llm_judge
+    ['domain', 'method']  # method: semantic/hardware_independent_judge
 )
 
 # Adapter usage

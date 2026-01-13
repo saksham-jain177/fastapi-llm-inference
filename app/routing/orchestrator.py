@@ -9,6 +9,7 @@ from app.routing.query_analyzer import get_query_analyzer
 from app.reasoners.factory import get_reasoner
 from app.models.adapter_manager import get_adapter_manager
 from app.rag.retrieval import search_web_context
+import asyncio
 import time
 
 
@@ -64,12 +65,13 @@ class Orchestrator:
             # Log for continuous learning (A+B=AB)
             from app.rag.data_collector import get_data_collector
             collector = get_data_collector()
-            collector.log_interaction(
+            # Fire-and-forget logging to avoid blocking sync path
+            asyncio.create_task(collector.log_interaction(
                 query=query,
                 context=context,
                 response=final_response,
                 intent="rag-external"
-            )
+            ))
             
             response_data.update({
                 "mode": "rag-external",
@@ -157,7 +159,6 @@ class Orchestrator:
                     print(f"  🔍 Novel query detected - triggering retrieval")
                     gate_decision_total.labels(type="search").inc()
                     
-                    from app.rag.retrieval import search_web_context
                     context = search_web_context(query)
                     
                     # Synthesize with reasoner (Ollama)

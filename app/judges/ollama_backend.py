@@ -1,19 +1,19 @@
 """
-Ollama-based LLM judge for domain classification.
-Uses local or cloud Ollama for more accurate classification than semantic router.
+Ollama-based Judge implementation.
+Lazy-loads ollama at runtime to prevent import-time hardware requirement.
 """
 
-import ollama
 import os
 from typing import Tuple
+from app.judges.base import Judge
 
 
-class OllamaJudge:
+class OllamaJudge(Judge):
     """
-    Uses Ollama LLM to classify queries when semantic router confidence is low.
-    More accurate but slower than semantic routing.
+    Uses Ollama LLM to classify queries.
+    Imports ollama only inside methods.
     """
-    
+
     CLASSIFICATION_PROMPT = """You are a domain classifier. Classify the following query into EXACTLY ONE category.
 
 Categories:
@@ -25,69 +25,49 @@ Categories:
 Query: "{query}"
 
 Respond with ONLY the category name (code, medical, legal, or general). No explanation or extra text."""
-    
+
     def __init__(self):
-        """Initialize Ollama judge with configuration from environment."""
         self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         self.model = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_K_M")
         self.available_domains = ["code", "medical", "legal", "general"]
-        
-        # Configure Ollama client
-        if self.base_url != "http://localhost:11434":
-            # Custom URL (e.g., cloud)
-            self.client = ollama.Client(host=self.base_url)
-        else:
-            # Default local
-            self.client = ollama.Client()
-    
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            import ollama
+            if self.base_url != "http://localhost:11434":
+                self._client = ollama.Client(host=self.base_url)
+            else:
+                self._client = ollama.Client()
+        return self._client
+
     def classify(self, query: str) -> Tuple[str, float]:
         """
         Classify query using Ollama LLM.
-        
-        Args:
-            query: User query to classify
-            
-        Returns:
-            Tuple of (domain, confidence)
-            Confidence is 0.95 for valid Ollama responses
         """
         try:
-            # Generate classification
+            client = self._get_client()
             prompt = self.CLASSIFICATION_PROMPT.format(query=query)
             
-            response = self.client.chat(
+            response = client.chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 options={
-                    "temperature": 0.1,  # Low temperature for consistent classification
-                    "num_predict": 10,   # Only need 1 word
+                    "temperature": 0.1,
+                    "num_predict": 10,
                 }
             )
             
-            # Extract domain from response
             response_text = response["message"]["content"].strip().lower()
             
-            detected_domain = "general"  # Default fallback
+            detected_domain = "general"
             for domain in self.available_domains:
                 if domain in response_text:
                     detected_domain = domain
                     break
             
-            # Ollama judge is very confident when it responds
             return detected_domain, 0.95
         
         except Exception as e:
-            print(f"Ollama judge error: {e}. Falling back to 'general' domain.")
+            # Fallback within the backend if provider fails
             return "general", 0.5
-
-
-# Global instance
-_ollama_judge = None
-
-
-def get_ollama_judge() -> OllamaJudge:
-    """Get or create Ollama judge instance."""
-    global _ollama_judge
-    if _ollama_judge is None:
-        _ollama_judge = OllamaJudge()
-    return _ollama_judge
