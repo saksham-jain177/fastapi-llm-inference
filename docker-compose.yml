@@ -1,6 +1,23 @@
-version: '3.8'
+version: "3.8"
 
 services:
+  # Redis (Cache & Broker)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # MongoDB (Data Lake)
+  mongo:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # Prometheus (Metrics)
   prometheus:
     image: prom/prometheus
     ports:
@@ -10,4 +27,23 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+  # Grafana (Dashboards)
+  grafana:
+    image: grafana/grafana-oss
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+
+volumes:
+  redis_data:
+  mongo_data:
+  grafana_data:

@@ -2,12 +2,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchSystemStats } from '../api';
+import LogsViewer from './LogsViewer';
 import './HealthPage.css';
 
 const HealthPage = () => {
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [logsOpen, setLogsOpen] = useState(false);
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -85,9 +87,14 @@ const HealthPage = () => {
                             {status.label}
                         </span>
                     </div>
-                    <button onClick={() => navigate('/')} className="back-btn">
-                        Exit Dashboard (Esc)
-                    </button>
+                    <div style={{ display: 'flex', gap: '12px' }}>
+                        <button onClick={() => setLogsOpen(true)} className="logs-btn">
+                            📋 View Logs
+                        </button>
+                        <button onClick={() => navigate('/')} className="back-btn">
+                            Exit Dashboard (Esc)
+                        </button>
+                    </div>
                 </div>
 
                 {/* Primary Metrics */}
@@ -169,6 +176,8 @@ const HealthPage = () => {
                 </div>
 
             </div>
+            
+            <LogsViewer isOpen={logsOpen} onClose={() => setLogsOpen(false)} />
         </div>
     );
 };

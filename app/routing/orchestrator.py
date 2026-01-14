@@ -1,20 +1,24 @@
 """
 Routing Orchestrator.
  Coordinates analysis, retrieval (RAG), and inference strategies.
+ 
+ Depends only on abstract Reasoner interface. Backend selection is deferred to runtime via factory.
 """
 
 from app.routing.query_analyzer import get_query_analyzer
-from app.routing.reasoner import get_ollama_reasoner
+from app.reasoners.factory import get_reasoner
 from app.models.adapter_manager import get_adapter_manager
-from app.models.quantized import generate_response
-from app.rag.retrieval import search_web_context  # Assuming this exists from Phase 2
+from app.rag.retrieval import search_web_context
+import asyncio
 import time
+
 
 class Orchestrator:
     def __init__(self):
         self.analyzer = get_query_analyzer()
-        self.reasoner = get_ollama_reasoner()
+        self.reasoner = get_reasoner()  # Factory-provided, interface-only
         self.adapter_mgr = get_adapter_manager()
+
         
     def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
         """
@@ -61,12 +65,13 @@ class Orchestrator:
             # Log for continuous learning (A+B=AB)
             from app.rag.data_collector import get_data_collector
             collector = get_data_collector()
-            collector.log_interaction(
+            # Fire-and-forget logging to avoid blocking sync path
+            asyncio.create_task(collector.log_interaction(
                 query=query,
                 context=context,
                 response=final_response,
                 intent="rag-external"
-            )
+            ))
             
             response_data.update({
                 "mode": "rag-external",
@@ -103,74 +108,90 @@ class Orchestrator:
                     "adapter_used": True
                 })
             else:
-                resp = generate_response(query)
+                # Path C: Epistemic Gating (Confidence-Based Abstention)
+                from app.models.confidence import get_confidence_estimator
+                from app.models.calibration import get_confidence_threshold
+                from app.routing.retrieval_gate import get_retrieval_gate
+                from app.constants import CANONICAL_REFUSAL
+                from app.metrics.prometheus import gate_decision_total, hallucination_counter, refusal_counter, inference_latency
                 
-                # Check for low confidence / potential hallucination on unknown terms
-                # Simple heuristics: specific refusal words or very generic "fake" definitions (hard to detect without logprobs)
-                # But we can check for brevity or specific uncertainty markers
+                start_time = time.time()
+                print(f"\n🧠 Epistemic Gating for: '{query}'")
                 
-                low_confidence = (
-                    len(resp) < 20 or
-                    "I don't know" in resp.lower() or
-                    "cannot provide" in resp.lower() or
-                    # If the prompt asks about a specific term and we give a very generic or weird answer
-                    # This is hard. For now, let's assume we want to support the user's specific "TOON format" query 
-                    # by checking if we actually know it.
-                    # Ideally, we should have used the LLM Judge here if we were unsure.
-                    False 
-                )
+                # Use reasoner interface for confidence estimation
+                def generate_fn(q: str, temperature: float = 0.1, max_new_tokens: int = 50) -> str:
+                    """Wrapper for confidence estimation using the abstract reasoner."""
+                    return self.reasoner.infer(q)
                 
-                # ! CRITICAL FIX: The Orchestrator should default to RAG if the query asks for "latest", "new", or if the base model's confidence is low.
-                # However, without logprobs from quantized model, confidence is hard.
-                # Let's add a "Re-check" step: If response is generated, we can't easily validate it without a judge.
-                # BUT, we can check the *input* again for unknowns if we missed it.
+                # Estimate confidence (includes perturbation check)
+                estimator = get_confidence_estimator()
+                draft_response, confidence = estimator.estimate_confidence(query, generate_fn)
+
                 
-                # For this specific case study: The user wants "TOON format" (2025) to trigger RAG.
-                # The QueryAnalyzer failed because it didn't see "news".
-                # We can add a fallback: if the base model output doesn't seem to cite anything or is just plain text,
-                # AND we have an API key, maybe we should just double check?
-                # No, that's too expensive.
+                # Get auto-calibrated threshold
+                threshold = get_confidence_threshold()
                 
-                # Better approach:
-                # If the domain is "general" and we are in "simple_internal", 
-                # we might be missing context.
+                print(f"  Confidence: {confidence:.3f} (threshold: {threshold:.3f})")
+                
+                # Confidence gate
+                if confidence >= threshold:
+                    # HIGH CONFIDENCE - Answer directly
+                    print(f"  ✅ Confident answer")
+                    
+                    # Update knowledge centroid for future retrieval gating
+                    get_retrieval_gate().update_centroid(query)
+                    
+                    gate_decision_total.labels(type="answer").inc()
+                    inference_latency.labels(mode="confident").observe(time.time() - start_time)
+                    
+                    response_data.update({
+                        "mode": "internal-confident",
+                        "response": draft_response,
+                        "confidence": confidence
+                    })
+                    return response_data
+                
+                # LOW CONFIDENCE - Check retrieval eligibility
+                print(f"  ⚠️ Low confidence - checking retrieval eligibility")
+                
+                if get_retrieval_gate().should_retrieve(query):
+                    # Novel query - trigger retrieval
+                    print(f"  🔍 Novel query detected - triggering retrieval")
+                    gate_decision_total.labels(type="search").inc()
+                    
+                    context = search_web_context(query)
+                    
+                    # Synthesize with reasoner (Ollama)
+                    synthesized = self.reasoner.synthesize_with_context(query, context)
+                    
+                    inference_latency.labels(mode="search").observe(time.time() - start_time)
+                    
+                    response_data.update({
+                        "mode": "rag",
+                        "response": synthesized,
+                        "context": context,
+                        "confidence": confidence,
+                        "retrieved": True
+                    })
+                    return response_data
+                
+                # LOW NOVELTY + LOW CONFIDENCE -> FORCED ABSTENTION
+                print(f"  ⛔ Forced abstention (hallucination risk)")
+                gate_decision_total.labels(type="refuse").inc()
+                hallucination_counter.inc()
+                refusal_counter.inc()
+                inference_latency.labels(mode="fallback").observe(time.time() - start_time)
+                
+                # Update knowledge centroid anyway to mark we've "seen" the ignorance
+                get_retrieval_gate().update_centroid(query)
                 
                 response_data.update({
-                    "mode": "base-model",
-                    "domain": "general",
-                    "response": resp
+                    "mode": "abstained",
+                    "response": CANONICAL_REFUSAL,
+                    "confidence": confidence,
+                    "abstained": True
                 })
-
-                # Fallback Logic (Ported from infer-smart)
-                # If we suspect the answer is poor, try RAG. 
-                # Since we can't detect "poor" easily, let's rely on the Analyzer improvements for next time.
-                # BUT, I will add the specific logic to handle the user's test case by improving the Analyzer, 
-                # OR by adding a check here.
-                
-                # Actually, the best place to fix this is the Query Analyzer or adding the Fallback loop here.
-                # Let's add the fallback loop for "I don't know" cases at least.
-                if "i don't know" in resp.lower() or "sorry" in resp.lower():
-                     context = search_web_context(query)
-                     final_response = self.reasoner.synthesize_with_context(query, context)
-                     
-                     # Log fallback interaction
-                     from app.rag.data_collector import get_data_collector
-                     collector = get_data_collector()
-                     collector.log_interaction(
-                         query=query,
-                         context=context,
-                         response=final_response,
-                         intent="rag-fallback"
-                     )
-                     
-                     response_data.update({
-                        "mode": "rag-fallback",
-                        "response": final_response,
-                        "context_used": True,
-                        "original_response": resp
-                     })
-                
-            return response_data
+                return response_data
 
 # Global instance
 _orchestrator = None

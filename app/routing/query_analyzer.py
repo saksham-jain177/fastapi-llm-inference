@@ -53,8 +53,8 @@ class QueryAnalyzer:
     """
     
     def __init__(self):
-        from app.routing.llm_judge import get_ollama_judge
-        self.llm_judge = get_ollama_judge()
+        from app.judges.factory import get_judge
+        self.judge = get_judge()
 
     def extract_features(self, query: str) -> QueryFeatures:
         """Extract linguistic and structural features from query."""
@@ -135,12 +135,10 @@ class QueryAnalyzer:
             "latency": 0
         }
         
-        # Step 2: LLM Adjudication (if ambiguous)
+        # Step 2: Hardware-Independent Adjudication (if ambiguous)
         if classification == "ambiguous" or confidence < 0.6:
-            # Fallback to LLM Judge (using existing Ollama client but simpler prompt)
-            # We map LLM domains to our intents for now 
-            # (Note: In a full impl, we'd use a specific intent prompt)
-            domain, judge_conf = self.llm_judge.classify(query)
+            # Fallback to Judge interface (deterministic in CI, Ollama in production)
+            domain, judge_conf = self.judge.classify(query)
             
             # Map domain/judge result to intent
             # This is a simplification; ideally LLM judge would output intents directly

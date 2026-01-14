@@ -1,10 +1,13 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel
+from enum import Enum
+from typing import Optional
 import random
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from fastapi import Request
 
 # Load environment variables from .env file (for local development)
 env_path = Path(__file__).parent / '.env'
@@ -57,9 +60,6 @@ def health_check():
 @app.get("/model-info")
 def model_info():
     """Return information about the loaded model and RAG system."""
-    if USE_MOCK:
-        return {"mode": "mock", "message": "Using mocked inference (USE_MOCK=true)"}
-    
     info = {}
     
     # Model info
@@ -86,7 +86,7 @@ def infer(request: InferenceRequest):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
     # Content moderation
-    from app.moderation.content_filter import get_moderator
+    from app.moderation.factory import get_moderator
     moderator = get_moderator()
     is_safe, reason = moderator.moderate(request.prompt)
     if not is_safe:
@@ -156,7 +156,7 @@ def infer_rag(request: InferenceRequest):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
     # Content moderation
-    from app.moderation.content_filter import get_moderator
+    from app.moderation.factory import get_moderator
     moderator = get_moderator()
     is_safe, reason = moderator.moderate(request.prompt)
     if not is_safe:
@@ -207,7 +207,7 @@ def infer_lora(request: InferenceRequest):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
     # Content moderation
-    from app.moderation.content_filter import get_moderator
+    from app.moderation.factory import get_moderator
     moderator = get_moderator()
     is_safe, reason = moderator.moderate(request.prompt)
     if not is_safe:
@@ -243,7 +243,7 @@ def infer_adaptive(request: InferenceRequest):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
     # Content moderation verification
-    from app.moderation.content_filter import get_moderator
+    from app.moderation.factory import get_moderator
     moderator = get_moderator()
     is_safe, reason = moderator.moderate(request.prompt)
     if not is_safe:
@@ -277,13 +277,132 @@ def metrics():
     return Response(content=metrics_data, media_type=content_type)
 
 
+
 @app.get("/system-stats")
 async def system_stats():
     """
     Endpoint for frontend dashboard metrics.
-    Returns JSON of internal counters.
+    Returns JSON of internal counters, enriched with persistent DB stats.
     """
     from app.metrics.prometheus import get_system_stats
-    return get_system_stats()
+    from app.rag.data_collector import get_data_collector
+    
+    # Get ephemeral (RAM) stats from Prometheus
+    stats = get_system_stats()
+    
+    # Get persistent (Disk/DB) stats
+    try:
+        collector = get_data_collector()
+        db_stats = await collector.get_stats()
+        
+        # If DB has more logs than current process RAM (due to restart), use DB count
+        # This fixes "0 metrics" issue on dashboard after reload
+        if db_stats["count"] > stats["total_requests"]:
+            stats["total_requests"] = db_stats["count"]
+            
+        stats["storage_source"] = db_stats["source"]
+    except Exception as e:
+        print(f"Stats sync error: {e}")
+        
+    return stats
 
+
+@app.get("/logs/recent")
+async def get_recent_logs():
+    """
+    Endpoint for logs viewer UI.
+    Returns recent feedback logs with MongoDB/Redis status.
+    """
+    from app.rag.data_collector import get_data_collector
+    
+    collector = get_data_collector()
+    stats = await collector.get_stats()
+    logs = await collector.get_recent(limit=50)
+    
+    # Check Redis status
+    redis_status = "connected" if redis_client else "disconnected"
+    
+    return {
+        "total_count": stats["count"],
+        "source": stats["source"],
+        "redis_status": redis_status,
+        "recent_logs": logs
+    }
+
+
+class FeedbackLabel(str, Enum):
+    CORRECT = "correct"
+    INCORRECT = "incorrect"
+    SHOULD_HAVE_REFUSED = "should_have_refused"
+
+
+class FeedbackRequest(BaseModel):
+    query: str
+    response: str
+    label: FeedbackLabel  # New 3-label schema
+    model_mode: str
+    confidence: Optional[float] = None
+
+
+
+# Redis Rate Limiter
+from redis import asyncio as aioredis
+
+# Redis Connection (Async)
+redis_client = None
+
+@app.on_event("startup")
+async def startup_event():
+    global redis_client
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    redis_client = aioredis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    if redis_client:
+        await redis_client.close()
+
+
+@app.post("/feedback")
+async def submit_feedback(feedback: FeedbackRequest, request: Request):
+    """
+    Log user feedback for RLHF (3-label system).
+    Guardian: Rate limited to 1 request per 2 seconds per IP (Redis-backed).
+    """
+    try:
+        # 1. Redis Rate Limiting
+        client_ip = request.client.host
+        key = f"rate_limit:{client_ip}"
+        
+        # Check if key exists
+        if redis_client:
+            last_request = await redis_client.get(key)
+            if last_request:
+                return {"status": "ignored", "message": "Rate limit exceeded"}
+            
+            # Set key with 2 second expiry
+            await redis_client.set(key, "1", ex=2)
+        
+        # 2. Log Data (via DataCollector -> Mongo)
+        from app.rag.data_collector import get_data_collector
+        collector = get_data_collector()
+        
+        # Log with new schema
+        await collector.log_interaction(
+            query=feedback.query,
+            context="User Feedback", 
+            response=feedback.response,
+            intent=f"feedback_{feedback.label}",
+            feedback=feedback.label  # Store label as feedback field
+        )
+        
+        # Also store confidence if provided
+        if feedback.confidence:
+            # You could extend log_interaction to accept confidence
+            pass
+        
+        return {"status": "recorded", "message": "Feedback saved for training"}
+    except Exception as e:
+        print(f"Feedback log error: {e}")
+        return {"status": "error", "message": str(e)}
 
