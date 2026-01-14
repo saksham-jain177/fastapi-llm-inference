@@ -86,7 +86,7 @@ def infer(request: InferenceRequest):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
     # Content moderation
-    from app.moderation.content_filter import get_moderator
+    from app.moderation.factory import get_moderator
     moderator = get_moderator()
     is_safe, reason = moderator.moderate(request.prompt)
     if not is_safe:
@@ -156,7 +156,7 @@ def infer_rag(request: InferenceRequest):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
     # Content moderation
-    from app.moderation.content_filter import get_moderator
+    from app.moderation.factory import get_moderator
     moderator = get_moderator()
     is_safe, reason = moderator.moderate(request.prompt)
     if not is_safe:
@@ -207,7 +207,7 @@ def infer_lora(request: InferenceRequest):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
     # Content moderation
-    from app.moderation.content_filter import get_moderator
+    from app.moderation.factory import get_moderator
     moderator = get_moderator()
     is_safe, reason = moderator.moderate(request.prompt)
     if not is_safe:
@@ -243,7 +243,7 @@ def infer_adaptive(request: InferenceRequest):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
     # Content moderation verification
-    from app.moderation.content_filter import get_moderator
+    from app.moderation.factory import get_moderator
     moderator = get_moderator()
     is_safe, reason = moderator.moderate(request.prompt)
     if not is_safe:
