@@ -1,3 +1,7 @@
+"""
+Verification script for judge migration to factory pattern.
+Ensures routing logic is hardware-independent when requested.
+"""
 import os
 import sys
 

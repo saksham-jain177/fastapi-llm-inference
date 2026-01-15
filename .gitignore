@@ -23,6 +23,12 @@ htmlcov/
 # Environment variables
 .env
 .env.local
+app/.env
+
+# Local Data
+data/
+*.db
+*.sqlite
 
 # Docker
 *.log

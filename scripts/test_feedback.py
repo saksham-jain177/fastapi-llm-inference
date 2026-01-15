@@ -1,3 +1,7 @@
+"""
+Standalone integration test for the feedback API endpoint.
+Verifies that preference data is correctly logged to MongoDB.
+"""
 import requests
 import json
 import time

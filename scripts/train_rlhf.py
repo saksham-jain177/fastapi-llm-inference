@@ -1,3 +1,7 @@
+"""
+Data processing script for Reinforcement Learning from Human Feedback (RLHF).
+Prepares collected interaction logs for Kahneman-Tversky Optimization (KTO).
+"""
 import json
 import os
 from pathlib import Path

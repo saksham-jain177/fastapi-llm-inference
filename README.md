@@ -1,120 +1,45 @@
 # FastAPI LLM Inference
 
-LLM inference API with 4-bit quantization, LoRA fine-tuning, RAG, and intelligent routing.
+Production-ready LLM inference API featuring 4-bit quantization, LoRA fine-tuning, RAG, and intelligent routing.
 
 ## Features
 
-**Quantization**: 4-bit inference using `bitsandbytes` (6x memory reduction, minimal accuracy loss)
-
-**LoRA Fine-tuning**: Parameter-efficient fine-tuning on technical datasets with PEFT
-
-**Agentic RAG**: Hybrid architecture using Rule Engine + LLM Judge to route queries between internal models (Fast) and external retrieval (Accurate).
-
-**LoRA Fine-tuning**: Parameter-efficient fine-tuning on technical datasets with PEFT
-
-**RAG**: Real-time information retrieval via Tavily API for accurate, current responses
-
-**Metrics**: Prometheus monitoring for latency, request count, and classification precision/recall.
+- **Quantization**: 4-bit inference via `bitsandbytes`.
+- **Agentic RAG**: Hybrid routing between internal models and external retrieval.
+- **LoRA Fine-tuning**: Parameter-efficient training with PEFT.
+- **Observability**: Prometheus metrics for latency and classification performance.
 
 ## Quick Start
 
 ```bash
-# Install dependencies (using uv for deterministic builds)
+# Install dependencies
 uv pip sync uv.lock
 
 # Configure environment
 cp app/.env.example app/.env
-# Edit app/.env: set API_KEY and TAVILY_API_KEY. Optional: OLLAMA_BASE_URL.
 
-# Run server
-python -m uvicorn app.main:app --reload
-
-# Or use the dev orchestrator (starts full stack)
+# Start full stack (Infrastructure + Backend + Frontend)
 python dev.py
 
-# Test Adaptive Endpoint (Agentic RAG)
+# Test Adaptive Endpoint
 curl -X POST http://localhost:8000/infer-adaptive \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Explain the impact of quantum computing on cryptography"}'
+  -d '{"prompt": "Explain quantum computing"}'
 ```
 
 ## Testing (Hardware-Independent)
 
+Execution logic is verified in CI using deterministic backends:
+
 ```bash
-# Run tests without GPU or Ollama (CI mode)
-USE_DETERMINISTIC_INFERENCE=true pytest tests/ -v
+USE_DETERMINISTIC_INFERENCE=true USE_MOCKED_MODELS=true pytest tests/ -v
 ```
-
-## API Endpoints
-
-| Endpoint               | Description            | Use Case                                            |
-| ---------------------- | ---------------------- | --------------------------------------------------- |
-| `GET /health`          | Health check           | Monitoring                                          |
-| `GET /metrics`         | Prometheus Metrics     | Observability                                       |
-| `POST /infer-adaptive` | **Agentic RAG Router** | **Production Entrypoint** (Routes to best strategy) |
-| `POST /infer`          | Base quantized model   | Raw inference                                       |
-| `POST /infer-rag`      | Tavily RAG             | Forced external search                              |
-| `POST /infer-lora`     | LoRA Adapter           | Forced adapter usage                                |
 
 ## Architecture
 
-```mermaid
-graph TD
-    User -->|/infer-adaptive| Orchestrator
-    Orchestrator -->|Query Analyzer| Intent{Intent?}
+The system follows an **Interface → Factory → Backend** pattern to ensure hardware independence and CI stability.
 
-    Intent -->|High Confidence Code/Fact| Adapter[LoRA Adapter]
-    Intent -->|Complex Analysis| Reasoner[Ollama CoT]
-    Intent -->|Real-time Info| RAG[Tavily Search]
-
-    Adapter --> Response
-    Reasoner --> Response
-    RAG --> Response
-```
-
-## Configuration
-
-**Environment Variables** (`app/.env`):
-
-- `API_KEY`: API authentication
-- `TAVILY_API_KEY`: Tavily RAG API key
-
-## Tech Stack
-
-- **Framework**: FastAPI 0.110+
-- **LLM**: Qwen2.5-0.5B-Instruct (quantized)
-- **Quantization**: bitsandbytes (4-bit NF4)
-- **Fine-tuning**: PEFT (LoRA rank 16)
-- **RAG**: Tavily API
-- **Deployment**: Docker, GitHub Actions, Render
-
-## CI/CD
-
-Automated pipeline via GitHub Actions:
-
-- Run tests on push
-- Build Docker image
-- Deploy to staging (auto)
-- Deploy to production (on git tag)
-
-See `.github/workflows/deploy.yml` for details.
-
-## Performance
-
-**Base Quantized Model**:
-
-- Memory: ~2GB VRAM (4-bit quantization)
-- Speed: ~1.5 tokens/sec (RTX 4050, CPU fallback supported)
-
-**LoRA Adapter**:
-
-- Training: 10-15 min (1000 samples, 1 epoch)
-- Inference: Same as base (adapter overhead <5%)
-
-**Smart Routing**:
-
-- Cache hit rate: 33%+ (reduces Tavily costs)
-- LoRA-first strategy: 70% queries answered without external API
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for core design principles and [DEVELOPMENT.md](docs/DEVELOPMENT.md) for setup and workflow guides.
 
 ## License
 

@@ -1,8 +1,8 @@
 """
-Synthetic feedback dataset generator for RLHF demonstration.
+RLHF Fixture Data Generator.
 
-Generates realistic positive/negative examples and writes to MongoDB
-to test full feedback pipeline: UI → MongoDB → Training Script.
+Generates controlled positive/negative interaction examples for pipeline verification.
+Outputs to MongoDB to validate the feedback -> training workflow.
 """
 
 import asyncio
@@ -10,14 +10,21 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime
 import os
 
+# Execution Guardrail
+if os.getenv("ALLOW_FIXTURE_GENERATION") != "true":
+    raise RuntimeError(
+        "Fixture generation not allowed. Set ALLOW_FIXTURE_GENERATION=true to proceed. "
+        "This tool is intended for pipeline verification, not production data injection."
+    )
+
 # MongoDB connection
 MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(MONGO_URL)
 db = client.llm_inference
 collection = db.interactions
 
-# Synthetic dataset: Hallucinations (negative) vs Accurate (positive)
-SYNTHETIC_DATA = [
+# Fixture dataset: Hallucinations (negative) vs Accurate (positive)
+FIXTURE_DATA = [
     # Negative: Hallucinations
     {
         "query": "What is N8n?",
@@ -84,15 +91,15 @@ SYNTHETIC_DATA = [
 ]
 
 
-async def insert_synthetic_data():
-    """Insert synthetic examples into MongoDB."""
+async def insert_fixture_data():
+    """Insert fixture examples into MongoDB."""
     print(f"Connecting to MongoDB at {MONGO_URL}")
     
-    for idx, example in enumerate(SYNTHETIC_DATA):
+    for idx, example in enumerate(FIXTURE_DATA):
         entry = {
             "timestamp": datetime.utcnow().isoformat(),
             "query": example["query"],
-            "context": "Synthetic Training Data",
+            "context": "RLHF Verification Fixture",
             "response": example["response"],
             "intent": example["intent"],
             "feedback": example["feedback"],
@@ -104,12 +111,12 @@ async def insert_synthetic_data():
         }
         
         await collection.insert_one(entry)
-        print(f"✅ Inserted {idx + 1}/{len(SYNTHETIC_DATA)}: {example['intent']}")
+        print(f"✅ Inserted {idx + 1}/{len(FIXTURE_DATA)}: {example['intent']}")
     
     count = await collection.count_documents({})
     print(f"\n📊 Total interactions in DB: {count}")
-    print("✅ Synthetic data generation complete!")
+    print("✅ Fixture data generation complete!")
 
 
 if __name__ == "__main__":
-    asyncio.run(insert_synthetic_data())
+    asyncio.run(insert_fixture_data())

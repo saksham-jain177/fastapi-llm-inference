@@ -6,6 +6,14 @@ Uses flytech/python-codes-25k - high-quality Python instruction-output pairs.
 from datasets import load_dataset
 import json
 from pathlib import Path
+import os
+
+# Execution Guardrail
+if os.getenv("ALLOW_FIXTURE_GENERATION") != "true":
+    raise RuntimeError(
+        "Fixture generation not allowed. Set ALLOW_FIXTURE_GENERATION=true to proceed. "
+        "This script downloads and processes external datasets for training fixtures."
+    )
 
 
 def prepare_dataset(output_path: str = "training/data/lora_dataset.json", max_samples: int = 1000):

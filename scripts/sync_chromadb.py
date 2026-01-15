@@ -1,8 +1,7 @@
 """
-One-time script to sync MongoDB feedback into ChromaDB.
-Run this after generating synthetic data.
+Synchronize feedback data from MongoDB to ChromaDB.
+Used to keep the vector store aligned with human preference data.
 """
-
 import sys
 from pathlib import Path
 

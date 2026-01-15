@@ -1,3 +1,7 @@
+"""
+Verification script for moderation migration to factory pattern.
+Validates both deterministic and production moderation backends.
+"""
 import os
 import sys
 
