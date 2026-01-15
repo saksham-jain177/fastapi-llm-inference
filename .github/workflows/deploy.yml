@@ -18,35 +18,30 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # JOB 1: Run Tests
-  # EXPLANATION: This job checks that our code works before building/deploying
-  test:
+  # JOB 1: Verify Invariants
+  verify:
+    name: Verify invariants (hardware-independent)
     runs-on: ubuntu-latest
 
     steps:
-      # EXPLANATION: Checkout = download your code from GitHub to the runner
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # EXPLANATION: Install Python so we can run our tests
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # EXPLANATION: Install uv for deterministic dependency management
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
-      # EXPLANATION: Sync dependencies from the authoritative uv.lock
       - name: Install dependencies
         run: |
           uv pip install --system .
           uv pip install --system ".[dev]"
 
-      # EXPLANATION: Run pytest in hardware-independent mode - if ANY test fails, the workflow stops here
       - name: Run Unit & Gate Tests (Hardware-Independent)
         env:
           USE_DETERMINISTIC_INFERENCE: "true"
@@ -60,8 +55,9 @@ jobs:
           pytest app/tests/test_health.py -v
 
   # JOB 2: Build and Push Docker Image
-  build-and-push:
-    needs: test
+  package:
+    name: Build container image
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,7 +84,6 @@ jobs:
             type=ref,event=tag
             type=sha
 
-      # EXPLANATION: Build the Docker image from ROOT context
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -98,18 +93,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   # JOB 3: Deploy to Render
-  # EXPLANATION: This triggers Render to pull the new Docker image and redeploy
-  # "needs: build-and-push" means this only runs after image is successfully pushed
   deploy:
-    needs: build-and-push
+    name: Deploy to target environment
+    needs: package
     runs-on: ubuntu-latest
 
     steps:
-      # EXPLANATION: Render provides a "Deploy Hook" URL
-      # When we make an HTTP request to this URL, Render automatically:
-      # 1. Pulls the latest image from GHCR
-      # 2. Stops the old container
-      # 3. Starts a new container with the new image
       - name: Trigger Render deployment
         run: |
           curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
