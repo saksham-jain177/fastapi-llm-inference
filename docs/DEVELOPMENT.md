@@ -34,7 +34,7 @@ The repository includes tools for verifying full-stack pipelines without requiri
 To test the feedback-to-training loop, you can generate fixture data:
 
 ```bash
-ALLOW_FIXTURE_GENERATION=true python scripts/fixtures/generate_rlhf_fixture_data.py
+ALLOW_EXPLICIT_EXECUTION=true python scripts/fixtures/generate_rlhf_fixture_data.py
 ```
 
 > [!IMPORTANT]
@@ -50,14 +50,17 @@ To run the full test suite without a GPU or Ollama daemon:
 USE_DETERMINISTIC_INFERENCE=true USE_MOCKED_MODELS=true pytest tests/ -v
 ```
 
-## Training Pipeliness
+> [!NOTE]
+> All automated tests are maintained in a flat structure under `tests/`. This taxonomy may be split into unit/integration subdirectories if the suite size significantly increases.
+
+## Training Pipelines
 
 ### LoRA Fine-tuning
 
-1. Prepare data: `python scripts/prepare_dataset.py`
-2. Run training: `python scripts/lora_train.py`
+1. Prepare data: `ALLOW_EXPLICIT_EXECUTION=true python scripts/fixtures/prepare_dataset.py`
+2. Run training: `ALLOW_EXPLICIT_EXECUTION=true python scripts/training/train_lora.py`
 
 ### RLHF / KTO
 
-1. Process logs: `python scripts/train_rlhf.py`
-2. Synchronize vector store: `python scripts/sync_chromadb.py`
+1. Process logs: `ALLOW_EXPLICIT_EXECUTION=true python scripts/training/train_rlhf.py`
+2. Synchronize vector store: `ALLOW_EXPLICIT_EXECUTION=true python scripts/training/sync_chromadb.py`

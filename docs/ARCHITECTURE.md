@@ -25,11 +25,12 @@ The system is designed to be fully testable without specialized hardware (GPUs) 
 
 - **Deterministic Backends**: Each component provides a rule-based or keyword-based implementation for CI.
 - **Hardware Independence**: Setting `USE_DETERMINISTIC_INFERENCE=true` forces the factories to select these isolated backends. This ensures that CI validates logic flows, orchestration, and API integrity without infrastructure-induced failures.
+- **Test Location**: All automated tests reside in the root `tests/` directory to maintain a clear runtime/testing boundary.
 
 ## Developer Fixtures & Tooling
 
 To ensure the reliability of complex data pipelines (e.g., RLHF, feedback loops), the repository contains guarded fixture generators under `scripts/fixtures/`.
 
 - **Role**: These tools are used strictly for integration testing and pipeline verification.
-- **Safety**: All fixture generators are environment-guarded (`ALLOW_FIXTURE_GENERATION=true`) to prevent accidental execution in non-development contexts.
-- **Separation**: Fixtures are isolated from the core `app/` runtime and are not used in production or standard CI flows.
+- **Safety**: All fixture and training utilities are environment-guarded (`ALLOW_EXPLICIT_EXECUTION=true`) to prevent accidental execution in non-development contexts.
+- **Separation**: Fixtures and training logic are isolated from the core `app/` runtime and are not used in production or standard CI flows.

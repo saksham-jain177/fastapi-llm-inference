@@ -42,7 +42,7 @@ class MockModel:
         self.device = torch.device("cpu")
         self.dtype = torch.float32
 
-    def generate(self, inputs, **kwargs):
+    def generate(self, *args, **kwargs):
         # Deterministic fake response for "test" query or anything else
         # Return a tensor of token IDs. 
         # For simplicity, let's return some high-frequency tokens.

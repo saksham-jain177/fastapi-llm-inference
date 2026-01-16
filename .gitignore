@@ -47,6 +47,14 @@ training/*.pt
 checkpoints/
 *.bin
 
+# Training artifacts / model outputs
+training/artifacts/
+training/**/checkpoint-*/
+training/**/*.pt
+training/**/*.pth
+training/**/*.bin
+
+
 # Hugging Face Cache
 .cache/
 huggingface/

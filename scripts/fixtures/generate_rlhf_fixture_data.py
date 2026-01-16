@@ -11,9 +11,9 @@ from datetime import datetime
 import os
 
 # Execution Guardrail
-if os.getenv("ALLOW_FIXTURE_GENERATION") != "true":
+if os.getenv("ALLOW_EXPLICIT_EXECUTION") != "true":
     raise RuntimeError(
-        "Fixture generation not allowed. Set ALLOW_FIXTURE_GENERATION=true to proceed. "
+        "Fixture generation not allowed. Set ALLOW_EXPLICIT_EXECUTION=true to proceed. "
         "This tool is intended for pipeline verification, not production data injection."
     )
 

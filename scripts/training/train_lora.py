@@ -4,6 +4,14 @@ Uses PEFT library with 4-bit quantization for efficient training.
 """
 
 import torch
+import os
+
+# Execution Guardrail
+if os.getenv("ALLOW_EXPLICIT_EXECUTION") != "true":
+    raise RuntimeError(
+        "Training execution not allowed. Set ALLOW_EXPLICIT_EXECUTION=true to proceed. "
+        "This script performs heavy LLM fine-tuning."
+    )
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,

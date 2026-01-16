@@ -4,6 +4,14 @@ Used to keep the vector store aligned with human preference data.
 """
 import sys
 from pathlib import Path
+import os
+
+# Execution Guardrail
+if os.getenv("ALLOW_EXPLICIT_EXECUTION") != "true":
+    raise RuntimeError(
+        "Script execution not allowed. Set ALLOW_EXPLICIT_EXECUTION=true to proceed. "
+        "This tool synchronizes human preference data into the vector store."
+    )
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))

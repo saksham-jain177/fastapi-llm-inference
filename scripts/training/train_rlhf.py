@@ -5,6 +5,13 @@ Prepares collected interaction logs for Kahneman-Tversky Optimization (KTO).
 import json
 import os
 from pathlib import Path
+
+# Execution Guardrail
+if os.getenv("ALLOW_EXPLICIT_EXECUTION") != "true":
+    raise RuntimeError(
+        "Training execution not allowed. Set ALLOW_EXPLICIT_EXECUTION=true to proceed. "
+        "This script processes interaction logs for RLHF/KTO training."
+    )
 import pandas as pd
 from datasets import Dataset
 
