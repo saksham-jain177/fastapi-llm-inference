@@ -1,7 +1,6 @@
 # FastAPI LLM Inference
 
-LLM inference API featuring 4-bit quantization, LoRA fine-tuning, RAG, and modular routing.
-
+LLM inference API built with FastAPI, focusing on quantization, adaptive routing, and hardware-independent evaluation.
 ## Features
 
 - **Quantization**: 4-bit inference via `bitsandbytes`.
