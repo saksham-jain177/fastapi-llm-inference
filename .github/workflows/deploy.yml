@@ -27,7 +27,6 @@ on:
 jobs:
   verify-invariants:
     runs-on: ubuntu-latest
-
     env:
       USE_DETERMINISTIC_INFERENCE: "true"
       USE_MOCKED_MODELS: "true"
@@ -39,10 +38,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: |
-          pip install uv
-          uv pip sync --system --extra dev uv.lock
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv pip sync --system uv.lock
 
       - name: Run tests
-        run: python -m pytest tests/ -v
+        run: uv run pytest tests/ -v
