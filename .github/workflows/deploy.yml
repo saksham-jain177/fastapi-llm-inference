@@ -46,13 +46,7 @@ jobs:
         env:
           USE_DETERMINISTIC_INFERENCE: "true"
         run: |
-          # 1. Epistemic Gate Verification
-          pytest tests/test_epistemic_gate.py -v
-          # 2. Metrics Invariant Contract
-          pytest tests/test_metrics.py -v
-          # 3. Legacy Logic Tests
-          pytest app/tests/test_routing_logic.py -v
-          pytest app/tests/test_health.py -v
+          pytest tests/ -v
 
   # JOB 2: Build and Push Docker Image
   package:
