@@ -1,6 +1,6 @@
 # FastAPI LLM Inference
 
-Production-ready LLM inference API featuring 4-bit quantization, LoRA fine-tuning, RAG, and intelligent routing.
+LLM inference API featuring 4-bit quantization, LoRA fine-tuning, RAG, and modular routing.
 
 ## Features
 
@@ -27,9 +27,12 @@ curl -X POST http://localhost:8000/infer-adaptive \
   -d '{"prompt": "Explain quantum computing"}'
 ```
 
-## Testing (Hardware-Independent)
+CI validates system invariants such as routing, confidence gating,
+interface contracts, and metrics behavior using deterministic backends.
 
-Execution logic is verified in CI using deterministic backends:
+This ensures reproducibility, hardware independence, and deploy safety.
+Model quality and retrieval effectiveness are evaluated offline
+and through runtime monitoring, not in CI.
 
 ```bash
 USE_DETERMINISTIC_INFERENCE=true USE_MOCKED_MODELS=true pytest tests/ -v
