@@ -44,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install uv
-          uv pip sync uv.lock
+          uv pip sync uv.lock --system
 
       - name: Run tests
         run: pytest tests/ -v
