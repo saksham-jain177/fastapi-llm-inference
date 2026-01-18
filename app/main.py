@@ -54,8 +54,30 @@ def read_root():
     return {"message": "FastAPI LLM Inference API is running. Visit /docs for documentation."}
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok"}
+async def health_check():
+    """Service health check with infrastructure probes."""
+    health = {"status": "ok", "mongo": "disconnected", "redis": "disconnected"}
+    
+    # 1. Check Redis
+    if redis_client:
+        try:
+            await redis_client.ping()
+            health["redis"] = "connected"
+        except:
+            pass
+            
+    # 2. Check Mongo (via DataCollector)
+    try:
+        from app.rag.data_collector import get_data_collector
+        collector = get_data_collector()
+        if collector.mongo_collection is not None:
+            # Simple ping to verify connection
+            await collector.mongo_collection.database.command("ping")
+            health["mongo"] = "connected"
+    except:
+        pass
+            
+    return health
 
 @app.get("/model-info")
 def model_info():
@@ -214,8 +236,9 @@ def infer_lora(request: InferenceRequest):
         raise HTTPException(status_code=400, detail=f"Content policy violation: {reason}")
     
     try:
-        from app.models.lora import generate_lora_response
-        response_text = generate_lora_response(request.prompt)
+        from app.models.adapter_manager import get_adapter_manager
+        adapter_mgr = get_adapter_manager()
+        response_text = adapter_mgr.generate_with_adapter("code", request.prompt)
         
         return {
             "response": response_text,

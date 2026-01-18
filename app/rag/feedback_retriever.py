@@ -14,13 +14,20 @@ from typing import List, Dict, Optional
 class FeedbackRetriever:
     def __init__(self):
         """Initialize ChromaDB with persistent storage."""
-        # Reuse same embeddings as semantic router for consistency
-        self.encoder = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        import os
+        self.use_deterministic = os.getenv("USE_DETERMINISTIC_INFERENCE", "false").lower() == "true"
+        
+        if not self.use_deterministic:
+            from sentence_transformers import SentenceTransformer
+            self.encoder = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        else:
+            self.encoder = None
         
         # Persistent storage in project directory
         db_path = os.path.join(os.path.dirname(__file__), '../../data/chroma')
         os.makedirs(db_path, exist_ok=True)
         
+        # Use simple settings for persistent client
         self.client = chromadb.PersistentClient(path=db_path)
         
         # Get or create collection
@@ -69,6 +76,9 @@ class FeedbackRetriever:
         Returns:
             List of {query, response, similarity} dicts
         """
+        if self.use_deterministic:
+            return []
+
         # Generate embedding for query
         query_embedding = self.encoder.encode(query).tolist()
         

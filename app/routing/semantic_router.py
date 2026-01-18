@@ -50,6 +50,15 @@ class SemanticRouter:
     
     def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
         """Initialize semantic router with sentence transformer model."""
+        import os
+        self.use_deterministic = os.getenv("USE_DETERMINISTIC_INFERENCE", "false").lower() == "true"
+        
+        if self.use_deterministic:
+            print("🔧 Semantic router in deterministic mode (keyword-based)")
+            self.model = None
+            self.domain_exemplar_embeddings = {}
+            return
+
         print(f"Loading semantic router: {model_name}")
         self.model = SentenceTransformer(model_name)
         
@@ -72,6 +81,17 @@ class SemanticRouter:
         Returns:
             Tuple of (domain, confidence_score)
         """
+        if self.use_deterministic:
+            # Keyword-based routing for CI
+            query_lower = query.lower()
+            if "python" in query_lower or "def " in query_lower or "code" in query_lower:
+                return "code", 1.0
+            if "patient" in query_lower or "symptoms" in query_lower or "medical" in query_lower:
+                return "medical", 1.0
+            if "law" in query_lower or "legal" in query_lower or "contract" in query_lower:
+                return "legal", 1.0
+            return "general", 0.5
+
         # Encode query
         query_embedding = self.model.encode([query])[0]
         
