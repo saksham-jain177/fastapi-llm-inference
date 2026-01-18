@@ -10,7 +10,10 @@ client = TestClient(app)
 def test_health():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "mongo" in data
+    assert "redis" in data
 
 def test_infer_with_mock_env():
     import os

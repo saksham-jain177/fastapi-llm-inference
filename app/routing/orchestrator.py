@@ -58,6 +58,23 @@ class Orchestrator:
         
         # Path A: External Search (RAG)
         if predicted_intent == "external_search":
+            # 1. Check Memory (Feedback Retriever) for past high-confidence answer
+            from app.rag.feedback_retriever import get_feedback_retriever
+            memory = get_feedback_retriever()
+            matches = memory.search_similar(query, top_k=1, min_similarity=0.85)
+            
+            if matches:
+                match = matches[0]
+                print(f"  🧠 Memory hit! Reusing past answer (similarity: {match['similarity']})")
+                response_data.update({
+                    "mode": "rag-memory",
+                    "response": match["response"],
+                    "memory_used": True,
+                    "similarity": match["similarity"]
+                })
+                return response_data
+
+            # 2. Continue with external RAG if no memory hit
             context = search_web_context(query)
             # Synthesize with reasoner (Ollama)
             final_response = self.reasoner.synthesize_with_context(query, context)
@@ -156,7 +173,26 @@ class Orchestrator:
                 
                 if get_retrieval_gate().should_retrieve(query):
                     # Novel query - trigger retrieval
-                    print(f"  🔍 Novel query detected - triggering retrieval")
+                    print(f"  🔍 Novel query detected - checking memory first")
+                    
+                    # 1. Check Memory (Feedback Retriever)
+                    from app.rag.feedback_retriever import get_feedback_retriever
+                    memory = get_feedback_retriever()
+                    matches = memory.search_similar(query, top_k=1, min_similarity=0.85)
+                    
+                    if matches:
+                        match = matches[0]
+                        print(f"  🧠 Memory hit! Reusing past answer (similarity: {match['similarity']})")
+                        response_data.update({
+                            "mode": "rag-memory",
+                            "response": match["response"],
+                            "memory_used": True,
+                            "similarity": match["similarity"]
+                        })
+                        return response_data
+
+                    # 2. Trigger active retrieval
+                    print(f"  🔍 Triggering external retrieval")
                     gate_decision_total.labels(type="search").inc()
                     
                     context = search_web_context(query)
