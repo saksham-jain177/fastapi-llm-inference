@@ -54,7 +54,38 @@ class Orchestrator:
             "timestamp": time.time()
         }
         
-        # 2. Routing & Execution
+        # 2. Memory Lookup (Short-Circuit)
+        from app.rag.feedback_retriever import get_feedback_retriever
+        from app.metrics.prometheus import memory_hit_total, memory_miss_total
+        
+        try:
+            memory = get_feedback_retriever()
+            # Threshold chosen for high confidence reuse
+            matches = memory.search_similar(query, top_k=1, min_similarity=0.90)
+            
+            if matches:
+                match = matches[0]
+                print(f"  🧠 Memory hit! Reusing past answer (similarity: {match['similarity']:.3f})")
+                
+                # Metric
+                memory_hit_total.inc()
+                
+                response_data.update({
+                    "mode": "memory",
+                    "response": match["response"],
+                    "similarity": match["similarity"],
+                    "memory_short_circuit": True,
+                    "original_query": match["query"]
+                })
+                # SHORT-CIRCUIT: Return immediately
+                return response_data
+            else:
+                memory_miss_total.inc()
+        except Exception as e:
+            # Non-blocking failure
+            print(f"Memory lookup failed: {e}")
+            
+        # 3. Routing & Execution
         
         # Path A: External Search (RAG)
         if predicted_intent == "external_search":

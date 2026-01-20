@@ -55,6 +55,17 @@ cache_misses = Counter(
     ['cache_type']
 )
 
+# Memory Hit/Miss Metrics
+memory_hit_total = Counter(
+    'memory_hit_total',
+    'Total number of successful retrieval hits from semantic memory'
+)
+
+memory_miss_total = Counter(
+    'memory_miss_total',
+    'Total number of failed retrieval queries to semantic memory'
+)
+
 # Epistemic Gating Metrics
 gate_decision_total = Counter(
     'gate_decision_total',
