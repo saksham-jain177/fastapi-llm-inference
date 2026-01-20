@@ -46,9 +46,8 @@ class FeedbackRetriever:
             feedback: "1" (positive) or "-1" (negative)
             interaction_id: Unique ID from MongoDB
         """
-        # Only store positive feedback
-        if feedback != "1":
-            return
+        import time
+        # Store all feedback, positive or negative
         
         # Generate embedding
         embedding = self.encoder.encode(query).tolist()
@@ -59,14 +58,15 @@ class FeedbackRetriever:
             documents=[response],
             metadatas=[{
                 "query": query,
-                "feedback": feedback
+                "feedback": feedback,
+                "timestamp": time.time()
             }],
             ids=[interaction_id]
         )
     
     def search_similar(self, query: str, top_k: int = 3, min_similarity: float = 0.7) -> List[Dict]:
         """
-        Search for similar past queries with positive feedback.
+        Search for similar past queries with composite confidence scoring.
         
         Args:
             query: Current user query
@@ -74,7 +74,7 @@ class FeedbackRetriever:
             min_similarity: Minimum cosine similarity threshold (0-1)
         
         Returns:
-            List of {query, response, similarity} dicts
+            List of {query, response, similarity, confidence, ...} dicts
         """
         if self.use_deterministic:
             return []
@@ -85,27 +85,65 @@ class FeedbackRetriever:
         # Search ChromaDB
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=top_k,
+            n_results=top_k * 2,  # Fetch more to allow for suppression filtering
             include=['metadatas', 'documents', 'distances']
         )
         
         # Format results
         matches = []
+        import time
+        import math
+        
         if results['ids'] and len(results['ids'][0]) > 0:
             for i in range(len(results['ids'][0])):
-                # ChromaDB returns distance (lower = more similar)
-                # Convert to similarity score
+                # 1. Base Similarity
                 distance = results['distances'][0][i]
                 similarity = 1 - distance  # Cosine distance -> similarity
+                if similarity < min_similarity:
+                    continue
+                    
+                meta = results['metadatas'][0][i]
+                response_text = results['documents'][0][i]
                 
-                if similarity >= min_similarity:
-                    matches.append({
-                        "query": results['metadatas'][0][i]["query"],
-                        "response": results['documents'][0][i],
-                        "similarity": round(similarity, 3)
-                    })
+                # 2. Feedback Suppression check (Simple entry-level check)
+                # If THIS specific interaction was negative, we suppress it heavily
+                feedback_val = meta.get("feedback", "1")
+                if feedback_val == "-1":
+                    # Suppressed: Net negative feedback for this entry
+                    print(f"  [Memory] Suppressing negative entry (id={results['ids'][0][i]})")
+                    continue
+
+                # 3. Recency Weight (Exponential Decay)
+                # Half-life of ~7 days? Let's say 30 days.
+                # lambda = ln(2) / half_life
+                # weight = e^(-lambda * elapsed_days)
+                timestamp = meta.get("timestamp", 0)
+                if timestamp == 0:
+                     # Legacy entries without timestamp get neutral weight
+                     recency_weight = 0.8 
+                else:
+                    elapsed_seconds = time.time() - timestamp
+                    elapsed_days = elapsed_seconds / 86400
+                    lambda_decay = 0.693 / 30  # 30 day half-life
+                    recency_weight = math.exp(-lambda_decay * elapsed_days)
+                
+                # 4. Composite Confidence Score
+                # effective_confidence = similarity * feedback_weight * recency_weight
+                # feedback_weight is 1.0 since we filtered negatives
+                effective_confidence = similarity * 1.0 * recency_weight
+                
+                matches.append({
+                    "query": meta.get("query", ""),
+                    "response": response_text,
+                    "similarity": round(similarity, 3),
+                    "confidence": round(effective_confidence, 3),
+                    "recency": round(recency_weight, 3),
+                    "timestamp": timestamp
+                })
         
-        return matches
+        # Sort by effective confidence
+        matches.sort(key=lambda x: x["confidence"], reverse=True)
+        return matches[:top_k]
     
     def sync_from_mongodb(self):
         """

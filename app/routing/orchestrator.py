@@ -60,25 +60,38 @@ class Orchestrator:
         
         try:
             memory = get_feedback_retriever()
-            # Threshold chosen for high confidence reuse
-            matches = memory.search_similar(query, top_k=1, min_similarity=0.90)
+            # Threshold chosen for high confidence reuse (Configurable)
+            import os
+            memory_threshold = float(os.getenv("MEMORY_ACCEPT_THRESHOLD", "0.85"))
+            
+            # search_similar now returns matches sorted by 'confidence'
+            matches = memory.search_similar(query, top_k=1, min_similarity=0.80)
             
             if matches:
                 match = matches[0]
-                print(f"  🧠 Memory hit! Reusing past answer (similarity: {match['similarity']:.3f})")
+                eff_conf = match.get("confidence", 0.0)
                 
-                # Metric
-                memory_hit_total.inc()
-                
-                response_data.update({
-                    "mode": "memory",
-                    "response": match["response"],
-                    "similarity": match["similarity"],
-                    "memory_short_circuit": True,
-                    "original_query": match["query"]
-                })
-                # SHORT-CIRCUIT: Return immediately
-                return response_data
+                if eff_conf >= memory_threshold:
+                    print(f"  🧠 Memory hit! Reusing past answer (conf: {eff_conf:.3f}, thresh: {memory_threshold})")
+                    
+                    # Metric
+                    memory_hit_total.inc()
+                    from app.metrics.prometheus import memory_short_circuit_confidence_avg
+                    memory_short_circuit_confidence_avg.observe(eff_conf)
+                    
+                    response_data.update({
+                        "mode": "memory",
+                        "response": match["response"],
+                        "similarity": match["similarity"],
+                        "confidence": eff_conf,
+                        "memory_short_circuit": True,
+                        "original_query": match["query"]
+                    })
+                    # SHORT-CIRCUIT: Return immediately
+                    return response_data
+                else:
+                    print(f"  🧠 Memory match found but confidence too low ({eff_conf:.3f} < {memory_threshold})")
+                    memory_miss_total.inc()
             else:
                 memory_miss_total.inc()
         except Exception as e:

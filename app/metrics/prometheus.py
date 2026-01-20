@@ -66,6 +66,12 @@ memory_miss_total = Counter(
     'Total number of failed retrieval queries to semantic memory'
 )
 
+memory_short_circuit_confidence_avg = Histogram(
+    'memory_short_circuit_confidence_avg',
+    'Confidence scores of memory short-circuit hits (avg derived)',
+    buckets=[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0]
+)
+
 # Epistemic Gating Metrics
 gate_decision_total = Counter(
     'gate_decision_total',
