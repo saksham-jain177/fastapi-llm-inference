@@ -67,7 +67,8 @@ def test_estimate_confidence_perturbation_refusal():
     assert confidence == 0.5  # Downgraded due to refusal in phase 2
 
 
-def test_orchestrator_decision_flow():
+@pytest.mark.asyncio
+async def test_orchestrator_decision_flow():
     """
     Test orchestrator routing using hardware-independent reasoner.
     No quantized model or Ollama required.
@@ -87,7 +88,7 @@ def test_orchestrator_decision_flow():
         mock_gate().should_retrieve.return_value = False
 
         orch = Orchestrator()
-        result = orch.route_and_execute("What is the capital of France?")
+        result = await orch.route_and_execute("What is the capital of France?")
 
         assert "response" in result
         assert result["mode"] in ["internal-confident", "abstained", "rag", "adapter"]

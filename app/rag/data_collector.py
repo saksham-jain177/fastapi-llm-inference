@@ -30,12 +30,25 @@ class DataCollector:
             except Exception as e:
                 print(f"DataCollector: Failed to connect to Mongo, falling back to file. {e}")
 
+        # Initialize Redis
+        self.redis_client = None
+        redis_url = os.getenv("REDIS_URL")
+        if redis_url:
+            try:
+                import redis.asyncio as redis
+                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                print("DataCollector: Connected to Redis")
+            except Exception as e:
+                print(f"DataCollector: Failed to connect to Redis. {e}")
+
     async def log_interaction(self, 
                        query: str, 
                        context: str, 
                        response: str, 
                        intent: str,
-                       feedback: Optional[str] = None):
+                       feedback: Optional[str] = None,
+                       confidence: float = 0.0,
+                       source: str = "model"):
         """
         Log a single interaction to MongoDB (primary) or JSONL (backup).
         """
@@ -46,6 +59,8 @@ class DataCollector:
             "response": response,
             "intent": intent,
             "feedback": feedback,
+            "confidence": confidence,
+            "source": source,
             # Format for Qwen fine-tuning
             "training_sample": {
                 "instruction": query,
@@ -58,14 +73,20 @@ class DataCollector:
         if self.mongo_collection is not None:
             try:
                 await self.mongo_collection.insert_one(entry)
-                print(f"✅ MongoDB: Saved feedback to MongoDB")
+                from app.metrics.prometheus import mongodb_write_total
+                mongodb_write_total.inc()
+                # print(f"✅ MongoDB: Saved feedback to MongoDB")
                 return
             except Exception as e:
                 import traceback
                 print(f"❌ Mongo Log Error: {e}")
-                traceback.print_exc()
+                # Fallback only if configured
+                if os.getenv("ALLOW_LOCAL_FALLBACK", "false").lower() != "true":
+                     print("Suggest enabling ALLOW_LOCAL_FALLBACK=true if Mongo is unstable.")
+                     return
         else:
-            print("⚠️ MongoDB collection is None, using file fallback")
+             if os.getenv("ALLOW_LOCAL_FALLBACK", "false").lower() != "true":
+                 return
         
         # Fallback to File
         try:
@@ -106,15 +127,16 @@ class DataCollector:
             except Exception as e:
                 print(f"Error fetching from Mongo: {e}")
         
-        # Fallback to file
-        if self.log_file.exists():
-            with open(self.log_file, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-                for line in reversed(lines[-limit:]):
-                    try:
-                        logs.append(json.loads(line))
-                    except:
-                        pass
+        # Fallback to file only if allowed
+        if os.getenv("ALLOW_LOCAL_FALLBACK", "false").lower() == "true":
+            if self.log_file.exists():
+                with open(self.log_file, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    for line in reversed(lines[-limit:]):
+                        try:
+                            logs.append(json.loads(line))
+                        except:
+                            pass
         
         return logs
 
@@ -135,16 +157,50 @@ class DataCollector:
             except Exception as e:
                 print(f"Error fetching from Mongo: {e}")
         
-        # Fallback to file
-        if self.log_file.exists():
-            with open(self.log_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        interactions.append(json.loads(line))
-                    except:
-                        continue
+        # Fallback to file only if allowed
+        if os.getenv("ALLOW_LOCAL_FALLBACK", "false").lower() == "true":
+            if self.log_file.exists():
+                with open(self.log_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            interactions.append(json.loads(line))
+                        except:
+                            continue
         
         return interactions
+
+    async def cache_response(self, query: str, response: str, ttl: int = 300):
+        """Cache high-confidence response in Redis."""
+        if self.redis_client:
+            try:
+                import hashlib
+                query_hash = hashlib.md5(query.strip().lower().encode()).hexdigest()
+                key = f"cache:response:{query_hash}"
+                await self.redis_client.set(key, response, ex=ttl)
+            except Exception as e:
+                print(f"Redis cache set failed: {e}")
+
+    async def get_cached_response(self, query: str) -> Optional[str]:
+        """Retrieve response from Redis cache."""
+        if self.redis_client:
+            try:
+                import hashlib
+                from app.metrics.prometheus import redis_cache_hit_total, redis_cache_miss_total
+                
+                query_hash = hashlib.md5(query.strip().lower().encode()).hexdigest()
+                key = f"cache:response:{query_hash}"
+                cached = await self.redis_client.get(key)
+                
+                if cached:
+                    redis_cache_hit_total.inc()
+                    return cached
+                else:
+                    redis_cache_miss_total.inc()
+                    return None
+            except Exception as e:
+                print(f"Redis cache get failed: {e}")
+                return None
+        return None
 
 # Global instance
 _collector = None

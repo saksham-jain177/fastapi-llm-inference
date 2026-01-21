@@ -58,24 +58,24 @@ async def health_check():
     """Service health check with infrastructure probes."""
     health = {"status": "ok", "mongo": "disconnected", "redis": "disconnected"}
     
-    # 1. Check Redis
-    if redis_client:
-        try:
-            await redis_client.ping()
-            health["redis"] = "connected"
-        except:
-            pass
-            
-    # 2. Check Mongo (via DataCollector)
     try:
         from app.rag.data_collector import get_data_collector
         collector = get_data_collector()
+        
+        # 1. Check Redis
+        if collector.redis_client:
+            try:
+                await collector.redis_client.ping()
+                health["redis"] = "connected"
+            except:
+                pass
+                
+        # 2. Check Mongo
         if collector.mongo_collection is not None:
-            # Simple ping to verify connection
             await collector.mongo_collection.database.command("ping")
             health["mongo"] = "connected"
-    except:
-        pass
+    except Exception as e:
+        health["error"] = str(e)
             
     return health
 
@@ -253,14 +253,9 @@ def infer_lora(request: InferenceRequest):
 
 
 @app.post("/infer-adaptive")
-def infer_adaptive(request: InferenceRequest):
+async def infer_adaptive(request: InferenceRequest):
     """
     Adaptive routing using Agentic RAG architecture.
-    
-    Orchestration Flow:
-    1. QueryAnalyzer: Extracts features & intent (Simple vs. Complex vs. External)
-    2. Rule Engine / LLM Adjudicator: Determines best strategy
-    3. Executor: Runs RAG, CoT Reasoning, or Domain Adapter
     """
     if not os.getenv("API_KEY"):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
@@ -277,7 +272,8 @@ def infer_adaptive(request: InferenceRequest):
         from app.routing.orchestrator import get_orchestrator
         orchestrator = get_orchestrator()
         
-        result = orchestrator.route_and_execute(request.prompt)
+        # Await async routing
+        result = await orchestrator.route_and_execute(request.prompt)
         
         return result
     
@@ -343,7 +339,7 @@ async def get_recent_logs():
     logs = await collector.get_recent(limit=50)
     
     # Check Redis status
-    redis_status = "connected" if redis_client else "disconnected"
+    redis_status = "connected" if collector.redis_client else "disconnected"
     
     return {
         "total_count": stats["count"],
@@ -368,24 +364,6 @@ class FeedbackRequest(BaseModel):
 
 
 
-# Redis Rate Limiter
-from redis import asyncio as aioredis
-
-# Redis Connection (Async)
-redis_client = None
-
-@app.on_event("startup")
-async def startup_event():
-    global redis_client
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    redis_client = aioredis.from_url(redis_url, encoding="utf-8", decode_responses=True)
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    if redis_client:
-        await redis_client.close()
-
-
 @app.post("/feedback")
 async def submit_feedback(feedback: FeedbackRequest, request: Request):
     """
@@ -393,22 +371,23 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
     Guardian: Rate limited to 1 request per 2 seconds per IP (Redis-backed).
     """
     try:
+        from app.rag.data_collector import get_data_collector
+        collector = get_data_collector()
+        
         # 1. Redis Rate Limiting
         client_ip = request.client.host
         key = f"rate_limit:{client_ip}"
         
         # Check if key exists
-        if redis_client:
-            last_request = await redis_client.get(key)
+        if collector.redis_client:
+            last_request = await collector.redis_client.get(key)
             if last_request:
                 return {"status": "ignored", "message": "Rate limit exceeded"}
             
             # Set key with 2 second expiry
-            await redis_client.set(key, "1", ex=2)
+            await collector.redis_client.set(key, "1", ex=2)
         
         # 2. Log Data (via DataCollector -> Mongo)
-        from app.rag.data_collector import get_data_collector
-        collector = get_data_collector()
         
         # Log with new schema
         await collector.log_interaction(
@@ -416,13 +395,10 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
             context="User Feedback", 
             response=feedback.response,
             intent=f"feedback_{feedback.label}",
-            feedback=feedback.label  # Store label as feedback field
+            feedback=feedback.label,
+            confidence=feedback.confidence if feedback.confidence else 0.0,
+            source="user-feedback"
         )
-        
-        # Also store confidence if provided
-        if feedback.confidence:
-            # You could extend log_interaction to accept confidence
-            pass
         
         return {"status": "recorded", "message": "Feedback saved for training"}
     except Exception as e:

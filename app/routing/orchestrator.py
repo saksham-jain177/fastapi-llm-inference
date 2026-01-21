@@ -19,8 +19,7 @@ class Orchestrator:
         self.reasoner = get_reasoner()  # Factory-provided, interface-only
         self.adapter_mgr = get_adapter_manager()
 
-        
-    def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
+    async def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
         """
         Execute full request pipeline:
         1. Analyze Query (Intent Classification)
@@ -31,6 +30,14 @@ class Orchestrator:
             query: User's prompt
             feedback_intent: Optional ground truth for metric logging (tp/fp etc)
         """
+        import asyncio
+        from functools import partial
+        
+        # Helper for running blocking IO/Compute in threadpool
+        async def run_sync(func, *args, **kwargs):
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, partial(func, *args, **kwargs))
+
         # 1. Analysis
         analysis = self.analyzer.analyze(query)
         predicted_intent = analysis["intent"]
@@ -54,7 +61,21 @@ class Orchestrator:
             "timestamp": time.time()
         }
         
-        # 2. Memory Lookup (Short-Circuit)
+        # 2a. Redis Hot Cache Lookup
+        from app.rag.data_collector import get_data_collector
+        collector = get_data_collector()
+        if hasattr(collector, 'get_cached_response'):
+            cached_resp = await collector.get_cached_response(query)
+            if cached_resp:
+                print(f"  ⚡ Redis Cache Hit")
+                response_data.update({
+                    "mode": "redis_cache",
+                    "response": cached_resp,
+                    "cache_hit": True
+                })
+                return response_data
+
+        # 2b. Memory Lookup (Mongo/Chroma)
         from app.rag.feedback_retriever import get_feedback_retriever
         from app.metrics.prometheus import memory_hit_total, memory_miss_total
         
@@ -79,6 +100,10 @@ class Orchestrator:
                     from app.metrics.prometheus import memory_short_circuit_confidence_avg
                     memory_short_circuit_confidence_avg.observe(eff_conf)
                     
+                    # Cache this memory hit in Redis for next time
+                    if hasattr(collector, 'cache_response'):
+                         await collector.cache_response(query, match["response"])
+
                     response_data.update({
                         "mode": "memory",
                         "response": match["response"],
@@ -103,13 +128,13 @@ class Orchestrator:
         # Path A: External Search (RAG)
         if predicted_intent == "external_search":
             # 1. Check Memory (Feedback Retriever) for past high-confidence answer
-            from app.rag.feedback_retriever import get_feedback_retriever
-            memory = get_feedback_retriever()
+            # Use sync search since we are likely missing hot cache
             matches = memory.search_similar(query, top_k=1, min_similarity=0.85)
             
             if matches:
                 match = matches[0]
                 print(f"  🧠 Memory hit! Reusing past answer (similarity: {match['similarity']})")
+                await collector.cache_response(query, match["response"])
                 response_data.update({
                     "mode": "rag-memory",
                     "response": match["response"],
@@ -119,20 +144,21 @@ class Orchestrator:
                 return response_data
 
             # 2. Continue with external RAG if no memory hit
-            context = search_web_context(query)
+            context = await run_sync(search_web_context, query)
             # Synthesize with reasoner (Ollama)
-            final_response = self.reasoner.synthesize_with_context(query, context)
+            final_response = await run_sync(self.reasoner.synthesize_with_context, query, context)
             
             # Log for continuous learning (A+B=AB)
-            from app.rag.data_collector import get_data_collector
-            collector = get_data_collector()
-            # Fire-and-forget logging to avoid blocking sync path
             asyncio.create_task(collector.log_interaction(
                 query=query,
                 context=context,
                 response=final_response,
-                intent="rag-external"
+                intent="rag-external",
+                source="rag"
             ))
+            
+            # Cache result
+            await collector.cache_response(query, final_response)
             
             response_data.update({
                 "mode": "rag-external",
@@ -143,7 +169,7 @@ class Orchestrator:
             
         # Path B: Complex Reasoning (Chain of Thought)
         elif predicted_intent == "complex_reasoning":
-            reasoning_result = self.reasoner.reason(query)
+            reasoning_result = await run_sync(self.reasoner.reason, query)
             
             response_data.update({
                 "mode": "internal-reasoning",
@@ -161,7 +187,7 @@ class Orchestrator:
             domain, conf = router.classify(query)
             
             if self.adapter_mgr.has_adapter(domain):
-                resp = self.adapter_mgr.generate_with_adapter(domain, query)
+                resp = await run_sync(self.adapter_mgr.generate_with_adapter, domain, query)
                 response_data.update({
                     "mode": "adapter",
                     "domain": domain,
@@ -186,7 +212,7 @@ class Orchestrator:
                 
                 # Estimate confidence (includes perturbation check)
                 estimator = get_confidence_estimator()
-                draft_response, confidence = estimator.estimate_confidence(query, generate_fn)
+                draft_response, confidence = await run_sync(estimator.estimate_confidence, query, generate_fn)
 
                 
                 # Get auto-calibrated threshold
@@ -205,6 +231,19 @@ class Orchestrator:
                     gate_decision_total.labels(type="answer").inc()
                     inference_latency.labels(mode="confident").observe(time.time() - start_time)
                     
+                    # Cache confident answer
+                    await collector.cache_response(query, draft_response)
+                    
+                    # Log confident interaction
+                    asyncio.create_task(collector.log_interaction(
+                        query=query,
+                        context="internal-knowledge",
+                        response=draft_response,
+                        intent="internal-confident",
+                        confidence=confidence,
+                        source="model"
+                    ))
+
                     response_data.update({
                         "mode": "internal-confident",
                         "response": draft_response,
@@ -220,13 +259,12 @@ class Orchestrator:
                     print(f"  🔍 Novel query detected - checking memory first")
                     
                     # 1. Check Memory (Feedback Retriever)
-                    from app.rag.feedback_retriever import get_feedback_retriever
-                    memory = get_feedback_retriever()
                     matches = memory.search_similar(query, top_k=1, min_similarity=0.85)
                     
                     if matches:
                         match = matches[0]
                         print(f"  🧠 Memory hit! Reusing past answer (similarity: {match['similarity']})")
+                        await collector.cache_response(query, match["response"])
                         response_data.update({
                             "mode": "rag-memory",
                             "response": match["response"],
@@ -239,13 +277,25 @@ class Orchestrator:
                     print(f"  🔍 Triggering external retrieval")
                     gate_decision_total.labels(type="search").inc()
                     
-                    context = search_web_context(query)
+                    context = await run_sync(search_web_context, query)
                     
                     # Synthesize with reasoner (Ollama)
-                    synthesized = self.reasoner.synthesize_with_context(query, context)
+                    synthesized = await run_sync(self.reasoner.synthesize_with_context, query, context)
                     
                     inference_latency.labels(mode="search").observe(time.time() - start_time)
                     
+                    # Log RAG interaction
+                    asyncio.create_task(collector.log_interaction(
+                        query=query,
+                        context=context,
+                        response=synthesized,
+                        intent="rag-fallback",
+                        source="rag"
+                    ))
+                    
+                    # Cache it
+                    await collector.cache_response(query, synthesized)
+
                     response_data.update({
                         "mode": "rag",
                         "response": synthesized,

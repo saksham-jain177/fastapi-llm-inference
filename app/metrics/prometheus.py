@@ -66,6 +66,28 @@ memory_miss_total = Counter(
     'Total number of failed retrieval queries to semantic memory'
 )
 
+# Infrastructure Metrics
+redis_cache_hit_total = Counter(
+    'redis_cache_hit_total',
+    'Total number of successful Redis cache hits'
+)
+
+redis_cache_miss_total = Counter(
+    'redis_cache_miss_total',
+    'Total number of Redis cache misses'
+)
+
+mongodb_read_total = Counter(
+    'mongodb_read_total',
+    'Total number of MongoDB read operations'
+)
+
+mongodb_write_total = Counter(
+    'mongodb_write_total',
+    'Total number of MongoDB write operations'
+)
+
+
 memory_short_circuit_confidence_avg = Histogram(
     'memory_short_circuit_confidence_avg',
     'Confidence scores of memory short-circuit hits (avg derived)',

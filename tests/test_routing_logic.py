@@ -40,7 +40,8 @@ class TestRoutingLogic:
         analysis = mock_analyzer.analyze(query)
         assert analysis["intent"] == "complex_reasoning"
 
-    def test_orchestrator_routing_rag(self):
+    @pytest.mark.asyncio
+    async def test_orchestrator_routing_rag(self):
         """Test that Orchestrator correctly calls RAG path."""
         from app.routing.orchestrator import Orchestrator
         # We patch the specific dependencies of the orchestrator
@@ -64,7 +65,7 @@ class TestRoutingLogic:
             
             # Execute
             orch = Orchestrator()
-            result = orch.route_and_execute("What is the weather?")
+            result = await orch.route_and_execute("What is the weather?")
             
             # Verify
             assert result["mode"] == "rag-external"
