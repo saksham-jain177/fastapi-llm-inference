@@ -23,4 +23,4 @@ def test_infer_with_mock_env():
     with patch.dict(os.environ, {"API_KEY": "test-secret"}):
         response = client.post("/infer", json={"prompt": "test"})
         assert response.status_code == 200
-        assert "response" in response.json()
+        assert "answer" in response.json()

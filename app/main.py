@@ -34,6 +34,13 @@ app.add_middleware(
 class InferenceRequest(BaseModel):
     prompt: str
 
+class InferenceResponse(BaseModel):
+    answer: str
+    confidence: float
+    intent: str
+    source: str
+    refused: bool
+
 # Check if we should use mock inference (for CI/staging without GPU)
 USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
 
@@ -133,10 +140,17 @@ def infer(request: InferenceRequest):
     try:
         from app.models.quantized import generate_response
         response_text = generate_response(request.prompt)
+        
+        # Increment metrics for base inference
+        from app.metrics.prometheus import response_confidence_bucket_total
+        response_confidence_bucket_total.labels(bucket="high").inc()
+        
         return {
-            "response": response_text,
-            "prompt_received": request.prompt,
-            "mode": "quantized"
+            "answer": response_text,
+            "confidence": 1.0, 
+            "intent": "simple_internal",
+            "source": "model",
+            "refused": False
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
@@ -252,7 +266,7 @@ def infer_lora(request: InferenceRequest):
 
 
 
-@app.post("/infer-adaptive")
+@app.post("/infer-adaptive", response_model=InferenceResponse)
 async def infer_adaptive(request: InferenceRequest):
     """
     Adaptive routing using Agentic RAG architecture.
@@ -275,7 +289,31 @@ async def infer_adaptive(request: InferenceRequest):
         # Await async routing
         result = await orchestrator.route_and_execute(request.prompt)
         
-        return result
+        # Map to contract
+        response = InferenceResponse(
+            answer=result["response"],
+            confidence=result["confidence"],
+            intent=result.get("intent", "unknown"),
+            source=result.get("source", "unknown"),
+            refused=result.get("refused", False)
+        )
+        
+        # Metric Increment at API Boundary
+        from app.metrics.prometheus import response_refusal_total, response_confidence_bucket_total
+        
+        if response.refused:
+            response_refusal_total.inc()
+            
+        # Confidence Distribution
+        if response.confidence > 0.8:
+            bucket = "high"
+        elif response.confidence >= 0.5:
+            bucket = "medium"
+        else:
+            bucket = "low"
+        response_confidence_bucket_total.labels(bucket=bucket).inc()
+        
+        return response
     
     except Exception as e:
         import traceback

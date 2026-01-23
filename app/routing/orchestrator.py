@@ -71,7 +71,11 @@ class Orchestrator:
                 response_data.update({
                     "mode": "redis_cache",
                     "response": cached_resp,
-                    "cache_hit": True
+                    "cache_hit": True,
+                    "confidence": 1.0,  # Cached answers are high confidence by definition
+                    "source": "redis",
+                    "intent": predicted_intent,
+                    "refused": False
                 })
                 return response_data
 
@@ -110,7 +114,10 @@ class Orchestrator:
                         "similarity": match["similarity"],
                         "confidence": eff_conf,
                         "memory_short_circuit": True,
-                        "original_query": match["query"]
+                        "original_query": match["query"],
+                        "source": "memory",
+                        "intent": predicted_intent,
+                        "refused": False
                     })
                     # SHORT-CIRCUIT: Return immediately
                     return response_data
@@ -139,7 +146,11 @@ class Orchestrator:
                     "mode": "rag-memory",
                     "response": match["response"],
                     "memory_used": True,
-                    "similarity": match["similarity"]
+                    "similarity": match["similarity"],
+                    "confidence": match.get("confidence", 0.9), # Fallback high conf for memory
+                    "source": "memory",
+                    "intent": "external_search",
+                    "refused": False
                 })
                 return response_data
 
@@ -163,7 +174,11 @@ class Orchestrator:
             response_data.update({
                 "mode": "rag-external",
                 "response": final_response,
-                "context_used": True
+                "context_used": True,
+                "confidence": 1.0, # RAG is considered high confidence by design intent
+                "source": "rag",
+                "intent": "external_search",
+                "refused": False
             })
             return response_data
             
@@ -175,7 +190,11 @@ class Orchestrator:
                 "mode": "internal-reasoning",
                 "response": reasoning_result["answer"],
                 "reasoning_trace": reasoning_result["reasoning"],
-                "reasoning_used": True
+                "reasoning_used": True,
+                "confidence": 1.0,
+                "source": "model",
+                "intent": "complex_reasoning",
+                "refused": False
             })
             return response_data
             
@@ -192,7 +211,11 @@ class Orchestrator:
                     "mode": "adapter",
                     "domain": domain,
                     "response": resp,
-                    "adapter_used": True
+                    "adapter_used": True,
+                    "confidence": conf,
+                    "source": "model",
+                    "intent": "simple_internal", # adapter is subtype
+                    "refused": False
                 })
             else:
                 # Path C: Epistemic Gating (Confidence-Based Abstention)
@@ -247,7 +270,10 @@ class Orchestrator:
                     response_data.update({
                         "mode": "internal-confident",
                         "response": draft_response,
-                        "confidence": confidence
+                        "confidence": confidence,
+                        "source": "model",
+                        "intent": "simple_internal",
+                        "refused": False
                     })
                     return response_data
                 
@@ -269,7 +295,11 @@ class Orchestrator:
                             "mode": "rag-memory",
                             "response": match["response"],
                             "memory_used": True,
-                            "similarity": match["similarity"]
+                            "similarity": match["similarity"],
+                            "confidence": match.get("confidence", 0.85),
+                            "source": "memory",
+                            "intent": "simple_internal", # fallback from epistemic
+                            "refused": False
                         })
                         return response_data
 
@@ -301,7 +331,10 @@ class Orchestrator:
                         "response": synthesized,
                         "context": context,
                         "confidence": confidence,
-                        "retrieved": True
+                        "retrieved": True,
+                        "source": "rag",
+                        "intent": "simple_internal",
+                        "refused": False
                     })
                     return response_data
                 
@@ -319,7 +352,10 @@ class Orchestrator:
                     "mode": "abstained",
                     "response": CANONICAL_REFUSAL,
                     "confidence": confidence,
-                    "abstained": True
+                    "abstained": True,
+                    "source": "refused",
+                    "intent": "simple_internal",
+                    "refused": True
                 })
                 return response_data
 

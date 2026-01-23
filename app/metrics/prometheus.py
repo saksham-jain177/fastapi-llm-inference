@@ -111,6 +111,19 @@ refusal_counter = Counter(
     'Count of model refusals / abstentions'
 )
 
+# Semantic API Contract Metrics
+response_refusal_total = Counter(
+    'response_refusal_total',
+    'Total number of refused responses exposed to the client'
+)
+
+response_confidence_bucket_total = Counter(
+    'response_confidence_bucket_total',
+    'Total number of responses by confidence bucket',
+    ['bucket'] # low, medium, high
+)
+
+
 # Inference specific latency (distinct from request latency)
 inference_latency = Histogram(
     'inference_latency_seconds',
