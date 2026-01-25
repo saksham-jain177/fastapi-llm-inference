@@ -1,6 +1,7 @@
 # FastAPI LLM Inference
 
 LLM inference API built with FastAPI, focusing on quantization, adaptive routing, and hardware-independent evaluation.
+
 ## Features
 
 - **Quantization**: 4-bit inference via `bitsandbytes`.
@@ -25,6 +26,23 @@ curl -X POST http://localhost:8000/infer-adaptive \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Explain quantum computing"}'
 ```
+
+### API Response Contract
+
+Both `/infer` and `/infer-adaptive` return a standardized semantic envelope:
+
+```json
+{
+  "answer": "string",
+  "confidence": 0.95,
+  "intent": "simple_internal | complex_reasoning | external_search",
+  "source": "redis | memory | rag | model | refused",
+  "refused": boolean
+}
+```
+
+- **Confidence**: Represents epistemic confidence (internal model agreement/consistency), not probabilistic accuracy.
+- **Refusal**: `refused=true` indicates the epistemic guardrail blocked a generative response to prevent hallucination.
 
 CI validates system invariants such as routing, confidence gating,
 interface contracts, and metrics behavior using deterministic backends.

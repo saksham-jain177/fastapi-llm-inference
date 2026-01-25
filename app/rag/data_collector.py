@@ -80,7 +80,7 @@ class DataCollector:
             except Exception as e:
                 import traceback
                 print(f"❌ Mongo Log Error: {e}")
-                # Fallback only if configured
+                # Guardrail: Fallback to local file logging is gated by ALLOW_LOCAL_FALLBACK to ensure Mongo-first policy by default.
                 if os.getenv("ALLOW_LOCAL_FALLBACK", "false").lower() != "true":
                      print("Suggest enabling ALLOW_LOCAL_FALLBACK=true if Mongo is unstable.")
                      return

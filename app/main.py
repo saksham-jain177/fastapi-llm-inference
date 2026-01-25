@@ -41,7 +41,7 @@ class InferenceResponse(BaseModel):
     source: str
     refused: bool
 
-# Check if we should use mock inference (for CI/staging without GPU)
+# Hardware-independent mode for CI/Verification (bypasses GPU requirements).
 USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
 
 
@@ -121,7 +121,7 @@ def infer(request: InferenceRequest):
     if not is_safe:
         raise HTTPException(status_code=400, detail=f"Content policy violation: {reason}")
     
-    # Use mock inference for CI/staging
+    # Hardware-independent fallback (CI/Staging)
     if USE_MOCK:
         responses = [
             "The sky is blue because of Rayleigh scattering.",

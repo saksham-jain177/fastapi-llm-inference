@@ -148,7 +148,7 @@ class FeedbackRetriever:
     def sync_from_mongodb(self):
         """
         One-time sync: Load all positive feedback from MongoDB into ChromaDB.
-        Call this after populating MongoDB with synthetic data.
+        Used to initialize semantic memory from seed data or collective logs.
         """
         from app.rag.data_collector import get_data_collector
         import asyncio

@@ -119,7 +119,7 @@ class Orchestrator:
                         "intent": predicted_intent,
                         "refused": False
                     })
-                    # SHORT-CIRCUIT: Return immediately
+                    # Guardrail: Reusing past high-confidence answers to bypass expensive RAG or Model inference.
                     return response_data
                 else:
                     print(f"  🧠 Memory match found but confidence too low ({eff_conf:.3f} < {memory_threshold})")
@@ -339,6 +339,7 @@ class Orchestrator:
                     return response_data
                 
                 # LOW NOVELTY + LOW CONFIDENCE -> FORCED ABSTENTION
+                # Guardrail: Epistemic gating logic enforces forced abstention for low-confidence, known-frontier queries to prevent hallucinations.
                 print(f"  ⛔ Forced abstention (hallucination risk)")
                 gate_decision_total.labels(type="refuse").inc()
                 hallucination_counter.inc()
