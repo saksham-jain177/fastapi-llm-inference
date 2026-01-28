@@ -48,7 +48,13 @@ Cite your sources using [Source X] format where appropriate."""
     def _get_client(self):
         """Lazy-load Ollama client. Import happens here, not at module level."""
         if self._client is None:
-            import ollama
+            try:
+                import ollama
+            except ImportError:
+                raise RuntimeError(
+                    "Ollama Python module not installed. Install with: pip install ollama. "
+                    "Note: The 'ollama serve' process must also be running."
+                )
             if self.base_url != "http://localhost:11434":
                 self._client = ollama.Client(host=self.base_url)
             else:

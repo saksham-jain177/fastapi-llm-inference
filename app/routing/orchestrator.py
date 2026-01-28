@@ -155,6 +155,20 @@ class Orchestrator:
                 return response_data
 
             # 2. Continue with external RAG if no memory hit
+            # Security: RAG Capability Guard
+            import os
+            if not os.getenv("TAVILY_API_KEY"):
+                print("  ❌ RAG unavailable: TAVILY_API_KEY not configured")
+                response_data.update({
+                    "mode": "refused",
+                    "response": "I cannot search for external information at this time. This capability is currently unavailable.",
+                    "confidence": 0.0,
+                    "source": "refused",
+                    "intent": "external_search",
+                    "refused": True
+                })
+                return response_data
+            
             context = await run_sync(search_web_context, query)
             # Synthesize with reasoner (Ollama)
             final_response = await run_sync(self.reasoner.synthesize_with_context, query, context)
