@@ -48,7 +48,8 @@ class TestRoutingLogic:
         with patch("app.routing.orchestrator.search_web_context") as mock_search, \
              patch("app.routing.orchestrator.get_query_analyzer") as mock_get_analyzer, \
              patch("app.routing.orchestrator.get_reasoner") as mock_get_reasoner, \
-             patch("app.routing.orchestrator.asyncio.create_task") as mock_create_task:
+             patch("app.routing.orchestrator.asyncio.create_task") as mock_create_task, \
+             patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
             
             # Setup analyzer mock
             mock_analyzer_instance = MagicMock()

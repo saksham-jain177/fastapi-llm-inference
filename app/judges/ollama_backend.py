@@ -34,7 +34,13 @@ Respond with ONLY the category name (code, medical, legal, or general). No expla
 
     def _get_client(self):
         if self._client is None:
-            import ollama
+            try:
+                import ollama
+            except ImportError:
+                raise RuntimeError(
+                    "Ollama Python module not installed. Install with: pip install ollama. "
+                    "Note: The 'ollama serve' process must also be running."
+                )
             if self.base_url != "http://localhost:11434":
                 self._client = ollama.Client(host=self.base_url)
             else:

@@ -44,6 +44,33 @@ class InferenceResponse(BaseModel):
 # Hardware-independent mode for CI/Verification (bypasses GPU requirements).
 USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
 
+# Security: Maximum prompt length (characters) to prevent DoS/OOM
+MAX_PROMPT_LENGTH = int(os.getenv("MAX_PROMPT_LENGTH", "8192"))
+
+# Rate Limiting: Simple sliding window via Redis
+RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "30"))
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+async def check_rate_limit(client_ip: str) -> bool:
+    """
+    Redis-backed rate limiter. Returns True if request is allowed.
+    Fails open (allows) on Redis errors.
+    """
+    try:
+        from app.rag.data_collector import get_data_collector
+        collector = get_data_collector()
+        if not collector.redis_client:
+            return True  # Fail open
+        
+        key = f"rate_limit:{client_ip}"
+        current = await collector.redis_client.incr(key)
+        if current == 1:
+            await collector.redis_client.expire(key, RATE_LIMIT_WINDOW_SECONDS)
+        
+        return current <= RATE_LIMIT_REQUESTS
+    except Exception:
+        return True  # Fail open on Redis errors
+
 
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html():
@@ -267,12 +294,37 @@ def infer_lora(request: InferenceRequest):
 
 
 @app.post("/infer-adaptive", response_model=InferenceResponse)
-async def infer_adaptive(request: InferenceRequest):
+async def infer_adaptive(request: InferenceRequest, req: Request):
     """
     Adaptive routing using Agentic RAG architecture.
     """
     if not os.getenv("API_KEY"):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
+    
+    # Security: Prompt size guard
+    if len(request.prompt) > MAX_PROMPT_LENGTH:
+        from app.metrics.prometheus import response_refusal_total
+        response_refusal_total.inc()
+        return InferenceResponse(
+            answer="I cannot process this request. The input exceeds the maximum allowed length.",
+            confidence=0.0,
+            intent="refused",
+            source="refused",
+            refused=True
+        )
+    
+    # Security: Rate limiting
+    client_ip = req.client.host if req.client else "unknown"
+    if not await check_rate_limit(client_ip):
+        from app.metrics.prometheus import response_refusal_total
+        response_refusal_total.inc()
+        return InferenceResponse(
+            answer="Rate limit exceeded. Please slow down your requests.",
+            confidence=0.0,
+            intent="refused",
+            source="refused",
+            refused=True
+        )
     
     # Content moderation verification
     from app.moderation.factory import get_moderator

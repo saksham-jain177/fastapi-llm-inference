@@ -125,17 +125,19 @@ const ChatInterface = () => {
       const data = await inferAdaptive(input);
       console.log('API Response:', data); // Debug log
       
-      if (!data || !data.response) {
+      if (!data || !data.answer) {
         throw new Error('Invalid response structure');
       }
       
       const assistantMsg = { 
         role: 'assistant', 
-        content: data.response,
+        content: data.answer,
         meta: {
-          mode: data.mode || 'adaptive',
+          mode: data.intent || 'adaptive', // Intent is the new 'mode'
           source: data.source || 'unknown',
-          context_used: data.context_used || false
+          confidence: data.confidence, // Explicitly expose confidence
+          refused: data.refused,       // Explicitly expose refusal
+          context_used: data.source === 'rag'
         }
       };
       
@@ -158,16 +160,13 @@ const ChatInterface = () => {
         {messages.map((msg, index) => (
           <div key={index} className={`message ${msg.role}`}>
             <div className={`message-bubble ${msg.role}`}>
-              {msg.meta && msg.meta.mode && (
-                <div className="meta-badge">
-                  {msg.meta.mode.charAt(0).toUpperCase() + msg.meta.mode.slice(1)} 
-                  {msg.meta.context_used && (
-                      <span className="icon" title="RAG Context Used">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginLeft: '4px'}}>
-                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-                        </svg>
-                      </span>
+              {msg.meta && (
+                <div className={`meta-badge ${msg.meta.refused ? 'refused' : ''}`}>
+                  <span className="source-tag">{msg.meta.source ? msg.meta.source.toUpperCase() : 'UNKNOWN'}</span>
+                  {msg.meta.confidence !== undefined && (
+                    <span className="confidence-tag">
+                      {Math.round(msg.meta.confidence * 100)}%
+                    </span>
                   )}
                 </div>
               )}
@@ -216,11 +215,11 @@ const ChatInterface = () => {
                           </svg>
                       </button>
                       <button 
-                          onClick={() => submitFeedback(index, 1)} 
-                          className={`action-btn ${msg.feedback === 'up' ? 'active' : ''}`}
+                          onClick={() => submitFeedback(index, 'correct')} 
+                          className={`action-btn ${msg.feedback === 'correct' ? 'active' : ''}`}
                           data-tooltip="Helpful"
                           disabled={!!msg.feedback} /* Strict Guardrail: One vote per message */
-                          style={!!msg.feedback ? { cursor: 'not-allowed', opacity: msg.feedback === 'up' ? 1 : 0.3 } : {}}
+                          style={!!msg.feedback ? { cursor: 'not-allowed', opacity: msg.feedback === 'correct' ? 1 : 0.3 } : {}}
                       >
                           {/* Thumbs Up */}
                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -228,11 +227,11 @@ const ChatInterface = () => {
                           </svg>
                       </button>
                       <button 
-                          onClick={() => submitFeedback(index, -1)} 
-                          className={`action-btn ${msg.feedback === 'down' ? 'active' : ''}`}
+                          onClick={() => submitFeedback(index, 'incorrect')} 
+                          className={`action-btn ${msg.feedback === 'incorrect' ? 'active' : ''}`}
                           data-tooltip="Not Helpful"
                           disabled={!!msg.feedback} /* Strict Guardrail: One vote per message */
-                          style={!!msg.feedback ? { cursor: 'not-allowed', opacity: msg.feedback === 'down' ? 1 : 0.3 } : {}}
+                          style={!!msg.feedback ? { cursor: 'not-allowed', opacity: msg.feedback === 'incorrect' ? 1 : 0.3 } : {}}
                       >
                           {/* Thumbs Down */}
                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
