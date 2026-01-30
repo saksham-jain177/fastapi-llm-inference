@@ -57,7 +57,7 @@ class TestRoutingLogic:
             mock_get_analyzer.return_value = mock_analyzer_instance
             
             # Setup search mock
-            mock_search.return_value = "Mock Context"
+            mock_search.return_value = ("Mock Context", [{"title": "Test Source", "url": "http://test.com"}])
             
             # Setup reasoner mock
             mock_reasoner_instance = MagicMock()
@@ -71,6 +71,7 @@ class TestRoutingLogic:
             # Verify
             assert result["mode"] == "rag-external"
             assert result["response"] == "RAG Response"
+            assert result["citations"] == [{"title": "Test Source", "url": "http://test.com"}]
             mock_search.assert_called_once_with("What is the weather?")
             mock_reasoner_instance.synthesize_with_context.assert_called_once()
             

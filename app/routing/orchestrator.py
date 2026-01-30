@@ -169,7 +169,7 @@ class Orchestrator:
                 })
                 return response_data
             
-            context = await run_sync(search_web_context, query)
+            context, citations = await run_sync(search_web_context, query)
             # Synthesize with reasoner (Ollama)
             final_response = await run_sync(self.reasoner.synthesize_with_context, query, context)
             
@@ -192,7 +192,8 @@ class Orchestrator:
                 "confidence": 1.0, # RAG is considered high confidence by design intent
                 "source": "rag",
                 "intent": "external_search",
-                "refused": False
+                "refused": False,
+                "citations": citations
             })
             return response_data
             

@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel
 from enum import Enum
-from typing import Optional
+from typing import Optional, List, Dict
 import random
 import os
 from pathlib import Path
@@ -40,6 +40,7 @@ class InferenceResponse(BaseModel):
     intent: str
     source: str
     refused: bool
+    citations: List[Dict] = []
 
 # Hardware-independent mode for CI/Verification (bypasses GPU requirements).
 USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
@@ -347,7 +348,8 @@ async def infer_adaptive(request: InferenceRequest, req: Request):
             confidence=result["confidence"],
             intent=result.get("intent", "unknown"),
             source=result.get("source", "unknown"),
-            refused=result.get("refused", False)
+            refused=result.get("refused", False),
+            citations=result.get("citations", [])
         )
         
         # Metric Increment at API Boundary

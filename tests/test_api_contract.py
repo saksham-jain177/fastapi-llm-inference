@@ -60,6 +60,8 @@ async def test_api_contract_response_shape():
         assert isinstance(data["refused"], bool)
         assert data["answer"] == "Deterministic Answer"
         assert data["source"] == "model"
+        assert "citations" in data
+        assert isinstance(data["citations"], list)
         
 @pytest.mark.asyncio
 async def test_api_contract_refusal():
