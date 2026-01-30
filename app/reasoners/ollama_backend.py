@@ -153,7 +153,7 @@ Cite your sources using [Source X] format where appropriate."""
                 messages=[{"role": "user", "content": prompt}],
                 options={
                     "temperature": 0.2,
-                    "num_predict": 300,
+                    "num_predict": 1024,
                 },
             )
 
