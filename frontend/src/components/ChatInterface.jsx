@@ -125,18 +125,19 @@ const ChatInterface = () => {
       const data = await inferAdaptive(input);
       console.log('API Response:', data); // Debug log
       
-      if (!data || !data.answer) {
-        throw new Error('Invalid response structure');
+      if (!data || typeof data.answer !== 'string') {
+        throw new Error('Invalid response structure: missing answer');
       }
       
       const assistantMsg = { 
         role: 'assistant', 
         content: data.answer,
         meta: {
-          mode: data.intent || 'adaptive', // Intent is the new 'mode'
+          mode: data.intent || 'adaptive',
           source: data.source || 'unknown',
-          confidence: data.confidence, // Explicitly expose confidence
-          refused: data.refused,       // Explicitly expose refusal
+          confidence: data.confidence,
+          refused: !!data.refused,
+          citations: Array.isArray(data.citations) ? data.citations : [],
           context_used: data.source === 'rag'
         }
       };
@@ -200,6 +201,45 @@ const ChatInterface = () => {
                 {msg.content}
               </ReactMarkdown>
 
+              {/* Citations Section */}
+              {msg.meta?.citations?.length > 0 && (
+                <div className="citations-section" style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                  <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: '#6b7280', marginBottom: '8px', letterSpacing: '0.05em' }}>
+                    Sources
+                  </div>
+                  <div className="citations-grid" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {msg.meta.citations.map((cite, i) => (
+                      <a 
+                        key={i}
+                        href={cite.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="citation-chip"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          color: '#60a5fa',
+                          fontSize: '0.85rem',
+                          textDecoration: 'none',
+                          maxWidth: '100%',
+                          transition: 'background 0.2s'
+                        }}
+                        onMouseOver={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
+                        onMouseOut={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'}
+                      >
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '300px' }}>
+                          {cite.title || cite.url}
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Message Actions */}
               {msg.role === 'assistant' && (
                   <div className="message-actions">
@@ -218,8 +258,8 @@ const ChatInterface = () => {
                           onClick={() => submitFeedback(index, 'correct')} 
                           className={`action-btn ${msg.feedback === 'correct' ? 'active' : ''}`}
                           data-tooltip="Helpful"
-                          disabled={!!msg.feedback} /* Strict Guardrail: One vote per message */
-                          style={!!msg.feedback ? { cursor: 'not-allowed', opacity: msg.feedback === 'correct' ? 1 : 0.3 } : {}}
+                          disabled={!!msg.feedback || msg.meta?.refused}
+                          style={(!!msg.feedback || msg.meta?.refused) ? { cursor: 'not-allowed', opacity: msg.feedback === 'correct' ? 1 : 0.3 } : {}}
                       >
                           {/* Thumbs Up */}
                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -230,8 +270,8 @@ const ChatInterface = () => {
                           onClick={() => submitFeedback(index, 'incorrect')} 
                           className={`action-btn ${msg.feedback === 'incorrect' ? 'active' : ''}`}
                           data-tooltip="Not Helpful"
-                          disabled={!!msg.feedback} /* Strict Guardrail: One vote per message */
-                          style={!!msg.feedback ? { cursor: 'not-allowed', opacity: msg.feedback === 'incorrect' ? 1 : 0.3 } : {}}
+                          disabled={!!msg.feedback || msg.meta?.refused}
+                          style={(!!msg.feedback || msg.meta?.refused) ? { cursor: 'not-allowed', opacity: msg.feedback === 'incorrect' ? 1 : 0.3 } : {}}
                       >
                           {/* Thumbs Down */}
                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
