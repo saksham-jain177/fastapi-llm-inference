@@ -19,6 +19,43 @@ class Orchestrator:
         self.reasoner = get_reasoner()  # Factory-provided, interface-only
         self.adapter_mgr = get_adapter_manager()
 
+    def _is_incomplete(self, text: str) -> bool:
+        """
+        Detects if the response seems truncated based on terminal punctuation.
+        """
+        if not text:
+            return False
+            
+        text = text.strip()
+        
+        # Check for valid terminal punctuation
+        valid_endings = ('.', '!', '?', '"', "'", '`', '}')
+        if text.endswith(valid_endings):
+            return False
+            
+        # Check for trailing stop words that suggest interruption
+        trailing_indicators = ('and', 'or', 'but', 'the', 'a', 'an', 'with', 'to', 'of', 'in', 'on', 'at', 'by', 'for', 'which', 'that')
+        if text.lower().endswith(trailing_indicators):
+            return True
+            
+        # If it doesn't end with valid punctuation, assume incomplete
+        return True
+
+    def _clean_citations(self, text: str, citations: list) -> str:
+        """
+        Enforce citation integrity:
+        1. If no citations exist, remove [Source X] markers (hallucinations).
+        2. If citations exist but text has no markers, that's fine (frontend handles it).
+        """
+        import re
+        
+        # Case 1: No valid citations -> Strip all markers
+        if not citations:
+            # Matches [Source 1], [Source 10], etc.
+            return re.sub(r'\[Source \d+\]', '', text).strip()
+            
+        return text
+
     async def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
         """
         Execute full request pipeline:
@@ -169,9 +206,30 @@ class Orchestrator:
                 })
                 return response_data
             
-            context, citations = await run_sync(search_web_context, query)
+            try:
+                # Security: Hard Limit on RAG Retrieval Time
+                context, citations = await asyncio.wait_for(run_sync(search_web_context, query), timeout=8.0)
+            except asyncio.TimeoutError:
+                print(f"  ❌ RAG Timeout (8s limit exceeded)")
+                response_data.update({
+                    "mode": "refused",
+                    "response": "External search timed out. The service is currently experiencing high latency.",
+                    "confidence": 0.0,
+                    "source": "refused",
+                    "intent": "external_search",
+                    "refused": True
+                })
+                return response_data
+
             # Synthesize with reasoner (Ollama)
             final_response = await run_sync(self.reasoner.synthesize_with_context, query, context)
+            
+            # Response Completeness Guard
+            if self._is_incomplete(final_response):
+                final_response += "\n\n(This answer may be incomplete. You can ask a follow-up.)"
+            
+            # Citation Integrity Guard
+            final_response = self._clean_citations(final_response, citations)
             
             # Log for continuous learning (A+B=AB)
             asyncio.create_task(collector.log_interaction(

@@ -79,3 +79,64 @@ class TestRoutingLogic:
             mock_create_task.assert_called_once()
             coro = mock_create_task.call_args[0][0]
             coro.close()
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_detects_truncated_response(self):
+        """Test that truncated answers get a warning appended."""
+        from app.routing.orchestrator import Orchestrator
+        with patch("app.routing.orchestrator.search_web_context") as mock_search, \
+             patch("app.routing.orchestrator.get_query_analyzer") as mock_get_analyzer, \
+             patch("app.routing.orchestrator.get_reasoner") as mock_get_reasoner, \
+             patch("app.routing.orchestrator.asyncio.create_task") as mock_create_task, \
+             patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
+            
+            # Setup intent
+            mock_analyzer = MagicMock()
+            mock_analyzer.analyze.return_value = {"intent": "external_search"}
+            mock_get_analyzer.return_value = mock_analyzer
+            
+            # Setup search (tuples)
+            mock_search.return_value = ("Context", [])
+            
+            # Setup reasoner to return incomplete text
+            mock_reasoner = MagicMock()
+            mock_reasoner.synthesize_with_context.return_value = "The capital of France is Paris and"  # No punctuation, ends with stop word
+            mock_get_reasoner.return_value = mock_reasoner
+            
+            orch = Orchestrator()
+            result = await orch.route_and_execute("Query")
+            
+            # Verify warning appended
+            assert "(This answer may be incomplete" in result["response"]
+            assert result["response"].startswith("The capital of France is Paris and")
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_strips_hallucinated_citations(self):
+        """Test that [Source X] markers are stripped if no citations exist."""
+        from app.routing.orchestrator import Orchestrator
+        with patch("app.routing.orchestrator.search_web_context") as mock_search, \
+             patch("app.routing.orchestrator.get_query_analyzer") as mock_get_analyzer, \
+             patch("app.routing.orchestrator.get_reasoner") as mock_get_reasoner, \
+             patch("app.routing.orchestrator.asyncio.create_task") as mock_create_task, \
+             patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
+            
+            # Setup intent
+            mock_analyzer = MagicMock()
+            mock_analyzer.analyze.return_value = {"intent": "external_search"}
+            mock_get_analyzer.return_value = mock_analyzer
+            
+            # Setup search (Returns NO citations)
+            mock_search.return_value = ("Context", [])
+            
+            # Setup reasoner to hallucinates sources
+            mock_reasoner = MagicMock()
+            mock_reasoner.synthesize_with_context.return_value = "This is a fact [Source 1] and another [Source 2]."
+            mock_get_reasoner.return_value = mock_reasoner
+            
+            orch = Orchestrator()
+            result = await orch.route_and_execute("Query")
+            
+            # Verify strip
+            assert "[Source 1]" not in result["response"]
+            assert "[Source 2]" not in result["response"]
+            assert result["response"] == "This is a fact  and another ."
