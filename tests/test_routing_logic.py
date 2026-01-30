@@ -61,7 +61,7 @@ class TestRoutingLogic:
             
             # Setup reasoner mock
             mock_reasoner_instance = MagicMock()
-            mock_reasoner_instance.synthesize_with_context.return_value = "RAG Response"
+            mock_reasoner_instance.synthesize_with_context.return_value = "RAG Response."
             mock_get_reasoner.return_value = mock_reasoner_instance
             
             # Execute
@@ -70,7 +70,7 @@ class TestRoutingLogic:
             
             # Verify
             assert result["mode"] == "rag-external"
-            assert result["response"] == "RAG Response"
+            assert result["response"] == "RAG Response."
             assert result["citations"] == [{"title": "Test Source", "url": "http://test.com"}]
             mock_search.assert_called_once_with("What is the weather?")
             mock_reasoner_instance.synthesize_with_context.assert_called_once()
