@@ -91,26 +91,33 @@ def read_root():
 @app.get("/health")
 async def health_check():
     """Service health check with infrastructure probes."""
-    health = {"status": "ok", "mongo": "disconnected", "redis": "disconnected"}
+    health = {"status": "ok", "mongo": "down", "redis": "down"}
     
     try:
         from app.rag.data_collector import get_data_collector
         collector = get_data_collector()
         
-        # 1. Check Redis
+        # 1. Check Redis (Non-blocking ping)
         if collector.redis_client:
             try:
-                await collector.redis_client.ping()
-                health["redis"] = "connected"
+                import asyncio
+                await asyncio.wait_for(collector.redis_client.ping(), timeout=1.0)
+                health["redis"] = "up"
             except:
                 pass
                 
-        # 2. Check Mongo
+        # 2. Check Mongo (Non-blocking ping)
         if collector.mongo_collection is not None:
-            await collector.mongo_collection.database.command("ping")
-            health["mongo"] = "connected"
-    except Exception as e:
-        health["error"] = str(e)
+            try:
+                import asyncio
+                await asyncio.wait_for(collector.mongo_collection.database.command("ping"), timeout=1.0)
+                health["mongo"] = "up"
+            except:
+                pass
+
+    except Exception:
+        # Service is still 'ok' even if infra degraded, per fail-open policy
+        pass
             
     return health
 
