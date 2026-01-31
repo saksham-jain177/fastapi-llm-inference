@@ -116,80 +116,40 @@ class Orchestrator:
                 })
                 return response_data
 
-        # 2b. Memory Lookup (Mongo/Chroma)
-        from app.rag.feedback_retriever import get_feedback_retriever
-        from app.metrics.prometheus import memory_hit_total, memory_miss_total
-        
-        try:
-            memory = get_feedback_retriever()
-            # Threshold chosen for high confidence reuse (Configurable)
-            import os
-            memory_threshold = float(os.getenv("MEMORY_ACCEPT_THRESHOLD", "0.85"))
-            
-            # search_similar now returns matches sorted by 'confidence'
-            matches = memory.search_similar(query, top_k=1, min_similarity=0.80)
-            
-            if matches:
-                match = matches[0]
-                eff_conf = match.get("confidence", 0.0)
-                
-                if eff_conf >= memory_threshold:
-                    print(f"  🧠 Memory hit! Reusing past answer (conf: {eff_conf:.3f}, thresh: {memory_threshold})")
-                    
-                    # Metric
-                    memory_hit_total.inc()
-                    from app.metrics.prometheus import memory_short_circuit_confidence_avg
-                    memory_short_circuit_confidence_avg.observe(eff_conf)
-                    
-                    # Cache this memory hit in Redis for next time
-                    if hasattr(collector, 'cache_response'):
-                         await collector.cache_response(query, match["response"])
-
-                    response_data.update({
-                        "mode": "memory",
-                        "response": match["response"],
-                        "similarity": match["similarity"],
-                        "confidence": eff_conf,
-                        "memory_short_circuit": True,
-                        "original_query": match["query"],
-                        "source": "memory",
-                        "intent": predicted_intent,
-                        "refused": False
-                    })
-                    # Guardrail: Reusing past high-confidence answers to bypass expensive RAG or Model inference.
-                    return response_data
-                else:
-                    print(f"  🧠 Memory match found but confidence too low ({eff_conf:.3f} < {memory_threshold})")
-                    memory_miss_total.inc()
-            else:
-                memory_miss_total.inc()
-        except Exception as e:
-            # Non-blocking failure
-            print(f"Memory lookup failed: {e}")
-            
         # 3. Routing & Execution
         
         # Path A: External Search (RAG)
         if predicted_intent == "external_search":
-            # 1. Check Memory (Feedback Retriever) for past high-confidence answer
-            # Use sync search since we are likely missing hot cache
-            matches = memory.search_similar(query, top_k=1, min_similarity=0.85)
-            
-            if matches:
-                match = matches[0]
-                print(f"  🧠 Memory hit! Reusing past answer (similarity: {match['similarity']})")
-                await collector.cache_response(query, match["response"])
-                response_data.update({
-                    "mode": "rag-memory",
-                    "response": match["response"],
-                    "memory_used": True,
-                    "similarity": match["similarity"],
-                    "confidence": match.get("confidence", 0.9), # Fallback high conf for memory
-                    "source": "memory",
-                    "intent": "external_search",
-                    "refused": False
-                })
-                return response_data
+            # 1. Check Memory (Feedback Retriever) for high-confidence historic answers
+            try:
+                from app.rag.feedback_retriever import get_feedback_retriever
+                from app.metrics.prometheus import memory_hit_total
+                
+                memory = get_feedback_retriever()
+                matches = memory.search_similar(query, top_k=1, min_similarity=0.85)
+                
+                if matches:
+                    match = matches[0]
+                    eff_conf = match.get("confidence", 0.0)
+                    
+                    if eff_conf >= 0.9:
+                        print(f"  🧠 Memory hit! Reusing high-confidence answer (conf: {eff_conf:.3f})")
+                        memory_hit_total.inc()
+                        
+                        await collector.cache_response(query, match["response"])
+                        response_data.update({
+                            "mode": "rag-memory",
+                            "response": match["response"],
+                            "memory_used": True,
+                            "similarity": match["similarity"],
+                            "confidence": eff_conf,
+                            "source": "memory",
+                            "intent": "external_search",
+                            "refused": False
+                        })
+                        return response_data
+            except Exception as e:
+                print(f"Memory lookup failed: {e}")
 
             # 2. Continue with external RAG if no memory hit
             # Security: RAG Capability Guard
