@@ -138,7 +138,7 @@ class Orchestrator:
                         
                         await collector.cache_response(query, match["response"])
                         response_data.update({
-                            "mode": "rag-memory",
+                            "mode": "memory",
                             "response": match["response"],
                             "memory_used": True,
                             "similarity": match["similarity"],
