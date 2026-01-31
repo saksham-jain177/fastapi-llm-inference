@@ -124,23 +124,24 @@ class SemanticRouter:
     def get_top_domains(self, query: str, top_k: int = 2) -> List[Tuple[str, float]]:
         """
         Get top-k most likely domains for a query.
-        
-        Args:
-            query: User query
-            top_k: Number of top domains to return
-            
-        Returns:
-            List of (domain, confidence) tuples, sorted by confidence
         """
+        if self.use_deterministic:
+            domain, conf = self.classify(query)
+            return [(domain, conf)]
+
         query_embedding = self.model.encode([query])[0]
         
         similarities = {}
-        for domain, domain_embedding in self.domain_embeddings.items():
-            similarity = cosine_similarity(
-                query_embedding.reshape(1, -1),
-                domain_embedding.reshape(1, -1)
-            )[0][0]
-            similarities[domain] = float(similarity)
+        # Fixed: Use domain_exemplar_embeddings and take MAX for consistency with classify()
+        for domain, exemplar_embeddings in self.domain_exemplar_embeddings.items():
+            domain_similarities = []
+            for exemplar_emb in exemplar_embeddings:
+                similarity = cosine_similarity(
+                    query_embedding.reshape(1, -1),
+                    exemplar_emb.reshape(1, -1)
+                )[0][0]
+                domain_similarities.append(float(similarity))
+            similarities[domain] = max(domain_similarities)
         
         # Sort by similarity
         sorted_domains = sorted(similarities.items(), key=lambda x: x[1], reverse=True)
