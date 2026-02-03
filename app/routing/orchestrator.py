@@ -71,16 +71,6 @@ class Orchestrator:
             query: User's prompt
             feedback_intent: Optional ground truth for metric logging (tp/fp etc)
         """
-        import asyncio
-        from functools import partial
-        
-    async def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
-        """
-        Execute full request pipeline:
-        1. Analyze Query (Intent Classification)
-        2. Route to appropriate handler
-        3. Execute (RAG, Reasoning, or Base Inference)
-        """
         # 1. Analysis
         analysis = self.analyzer.analyze(query)
         predicted_intent = analysis["intent"]
@@ -130,57 +120,32 @@ class Orchestrator:
         # Path A: External Search (RAG)
         if predicted_intent == "external_search":
             try:
-                memory = get_feedback_retriever()
-                matches = memory.search_similar(query, top_k=1, min_similarity=0.85)
-                
-                if matches:
-                    match = matches[0]
-                    eff_conf = match.get("confidence", 0.0)
-                    if eff_conf >= 0.9:
-                        print(f"  🧠 Memory hit! Reusing high-confidence answer")
-                        memory_hit_total.inc()
-                        await collector.cache_response(query, match["response"])
-                        response_data.update({
-                            "mode": "memory",
-                            "response": match["response"],
-                            "memory_used": True,
-                            "similarity": match["similarity"],
-                            "confidence": eff_conf,
-                            "source": "memory"
-                        })
-                        await collector.log_interaction(query, "memory-hit", match["response"], "external_search", confidence=eff_conf, source="memory")
-                        return response_data
+                # 1. Memory lookup (Short-circuit if we have high-confidence grounded answer)
+                memory_retriever = get_feedback_retriever()
+                if memory_retriever:
+                    # search_similar is SYNC
+                    memory_hits = memory_retriever.search_similar(query, top_k=1)
+                    if memory_hits:
+                        match = memory_hits[0]
+                        eff_conf = match["confidence"]
+                        if eff_conf >= 0.9:
+                            print(f"  🧠 Memory hit! Reusing high-confidence answer")
+                            memory_hit_total.inc()
+                            await collector.cache_response(query, match["response"])
+                            response_data.update({
+                                "mode": "memory",
+                                "response": match["response"],
+                                "memory_used": True,
+                                "similarity": match["similarity"],
+                                "confidence": eff_conf,
+                                "source": "memory"
+                            })
+                            await collector.log_interaction(query, "memory-hit", match["response"], "external_search", confidence=eff_conf, source="memory")
+                            return response_data
             except Exception as e:
                 print(f"Memory lookup failed: {e}")
 
-            import os
-            if not os.getenv("TAVILY_API_KEY"):
-                final_response = "I cannot search for external information at this time. This capability is currently unavailable."
-                response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
-            else:
-                try:
-                    # Sync call for IO (as requested: call it synchronously if it's sync)
-                    context, citations = search_web_context(query)
-                    final_response = await self.reasoner.synthesize_with_context(query, context)
-                    
-                    if self._is_incomplete(final_response):
-                        final_response += "\n\n(This answer may be incomplete. You can ask a follow-up.)"
-                    final_response = self._clean_citations(final_response, citations)
-                    
-                    await collector.cache_response(query, final_response)
-                    response_data.update({
-                        "mode": "rag-external",
-                        "response": final_response,
-                        "context_used": True,
-                        "confidence": 1.0,
-                        "source": "rag",
-                        "citations": citations
-                    })
-                    log_intent = "rag-external"
-                except Exception as e:
-                    print(f"RAG failed: {e}")
-                    final_response = "External search failed or timed out."
-                    response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
+            final_response, context, citations, log_intent = await self._execute_external_rag(query, collector, response_data)
 
         # Path B: Complex Reasoning
         elif predicted_intent == "complex_reasoning":
@@ -198,8 +163,12 @@ class Orchestrator:
         else:
             router = get_semantic_router()
             domain, conf = router.classify(query)
-            
-            if self.adapter_mgr.has_adapter(domain):
+
+            # FORCE RAG if domain is unknown (below semantic threshold)
+            if domain == "unknown":
+                print(f"[Orchestrator] Domain unknown (conf: {conf:.3f}), forcing RAG path")
+                final_response, context, citations, log_intent = await self._execute_external_rag(query, collector, response_data)
+            elif self.adapter_mgr.has_adapter(domain):
                 # Sync call for model inference (as requested)
                 resp = self.adapter_mgr.generate_with_adapter(domain, query)
                 final_response = resp
@@ -282,6 +251,45 @@ class Orchestrator:
         )
         
         return response_data
+
+    async def _execute_external_rag(self, query: str, collector, response_data: dict):
+        """Helper to execute external RAG (Tavily + Synthesis)."""
+        import os
+        
+        context = "none"
+        citations = []
+        log_intent = "external_search"
+        final_response = ""
+
+        if not os.getenv("TAVILY_API_KEY"):
+            final_response = "I cannot search for external information at this time. This capability is currently unavailable."
+            response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
+        else:
+            try:
+                # Sync call for IO
+                context, citations = search_web_context(query)
+                final_response = await self.reasoner.synthesize_with_context(query, context)
+                
+                if self._is_incomplete(final_response):
+                    final_response += "\n\n(This answer may be incomplete. You can ask a follow-up.)"
+                final_response = self._clean_citations(final_response, citations)
+                
+                await collector.cache_response(query, final_response)
+                response_data.update({
+                    "mode": "rag-external",
+                    "response": final_response,
+                    "context_used": True,
+                    "confidence": 1.0,
+                    "source": "rag",
+                    "citations": citations
+                })
+                log_intent = "rag-external"
+            except Exception as e:
+                print(f"RAG failed: {e}")
+                final_response = "External search failed or timed out."
+                response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
+        
+        return final_response, context, citations, log_intent
 
 # Global instance
 _orchestrator = None

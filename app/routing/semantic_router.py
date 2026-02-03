@@ -54,7 +54,7 @@ class SemanticRouter:
         self.use_deterministic = os.getenv("USE_DETERMINISTIC_INFERENCE", "false").lower() == "true"
         
         if self.use_deterministic:
-            print("🔧 Semantic router in deterministic mode (keyword-based)")
+            print("[Deterministic Mode] Semantic router using keyword-based routing")
             self.model = None
             self.domain_exemplar_embeddings = {}
             return
@@ -113,6 +113,13 @@ class SemanticRouter:
         # Get best match
         best_domain = max(similarities, key=similarities.get)
         confidence = similarities[best_domain]
+
+        # ENFORCE CONFIDENCE GATE
+        # If signal is too low, treat as 'unknown' to force RAG/Refusal
+        ROUTER_CONFIDENCE_THRESHOLD = 0.35
+        if confidence < ROUTER_CONFIDENCE_THRESHOLD:
+            print(f"[Semantic Router] Confidence {confidence:.3f} below threshold {ROUTER_CONFIDENCE_THRESHOLD}")
+            best_domain = "unknown"
         
         # Debug logging
         print(f"[Semantic Router] Query: '{query[:50]}...'")
