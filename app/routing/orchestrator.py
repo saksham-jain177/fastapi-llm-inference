@@ -11,6 +11,10 @@ from app.models.adapter_manager import get_adapter_manager
 from app.rag.retrieval import search_web_context
 import asyncio
 import time
+from app.rag.data_collector import get_data_collector
+from app.routing.semantic_router import get_semantic_router
+from app.rag.feedback_retriever import get_feedback_retriever
+from app.metrics.prometheus import memory_hit_total
 
 
 class Orchestrator:
@@ -70,11 +74,13 @@ class Orchestrator:
         import asyncio
         from functools import partial
         
-        # Helper for running blocking IO/Compute in threadpool
-        async def run_sync(func, *args, **kwargs):
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, partial(func, *args, **kwargs))
-
+    async def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
+        """
+        Execute full request pipeline:
+        1. Analyze Query (Intent Classification)
+        2. Route to appropriate handler
+        3. Execute (RAG, Reasoning, or Base Inference)
+        """
         # 1. Analysis
         analysis = self.analyzer.analyze(query)
         predicted_intent = analysis["intent"]
@@ -85,7 +91,6 @@ class Orchestrator:
                 classification_tp, classification_fp, 
                 classification_fn, classification_tn
             )
-            # Simple binary check: Match vs Mismatch
             if predicted_intent == feedback_intent:
                 classification_tp.labels(intent=predicted_intent).inc()
             else:
@@ -95,11 +100,14 @@ class Orchestrator:
         response_data = {
             "prompt_received": query,
             "analysis": analysis,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "refused": False,
+            "confidence": 0.0,
+            "source": "model",
+            "intent": predicted_intent
         }
         
-        # 2a. Redis Hot Cache Lookup
-        from app.rag.data_collector import get_data_collector
+        # Redis Hot Cache Lookup
         collector = get_data_collector()
         if hasattr(collector, 'get_cached_response'):
             cached_resp = await collector.get_cached_response(query)
@@ -109,33 +117,28 @@ class Orchestrator:
                     "mode": "redis_cache",
                     "response": cached_resp,
                     "cache_hit": True,
-                    "confidence": 1.0,  # Cached answers are high confidence by definition
-                    "source": "redis",
-                    "intent": predicted_intent,
-                    "refused": False
+                    "confidence": 1.0,
+                    "source": "redis"
                 })
                 return response_data
 
         # 3. Routing & Execution
-        
+        context = ""
+        final_response = ""
+        log_intent = predicted_intent
+
         # Path A: External Search (RAG)
         if predicted_intent == "external_search":
-            # 1. Check Memory (Feedback Retriever) for high-confidence historic answers
             try:
-                from app.rag.feedback_retriever import get_feedback_retriever
-                from app.metrics.prometheus import memory_hit_total
-                
                 memory = get_feedback_retriever()
                 matches = memory.search_similar(query, top_k=1, min_similarity=0.85)
                 
                 if matches:
                     match = matches[0]
                     eff_conf = match.get("confidence", 0.0)
-                    
                     if eff_conf >= 0.9:
-                        print(f"  🧠 Memory hit! Reusing high-confidence answer (conf: {eff_conf:.3f})")
+                        print(f"  🧠 Memory hit! Reusing high-confidence answer")
                         memory_hit_total.inc()
-                        
                         await collector.cache_response(query, match["response"])
                         response_data.update({
                             "mode": "memory",
@@ -143,115 +146,72 @@ class Orchestrator:
                             "memory_used": True,
                             "similarity": match["similarity"],
                             "confidence": eff_conf,
-                            "source": "memory",
-                            "intent": "external_search",
-                            "refused": False
+                            "source": "memory"
                         })
+                        await collector.log_interaction(query, "memory-hit", match["response"], "external_search", confidence=eff_conf, source="memory")
                         return response_data
             except Exception as e:
                 print(f"Memory lookup failed: {e}")
 
-            # 2. Continue with external RAG if no memory hit
-            # Security: RAG Capability Guard
             import os
             if not os.getenv("TAVILY_API_KEY"):
-                print("  ❌ RAG unavailable: TAVILY_API_KEY not configured")
-                response_data.update({
-                    "mode": "refused",
-                    "response": "I cannot search for external information at this time. This capability is currently unavailable.",
-                    "confidence": 0.0,
-                    "source": "refused",
-                    "intent": "external_search",
-                    "refused": True
-                })
-                return response_data
-            
-            try:
-                # Security: Hard Limit on RAG Retrieval Time
-                context, citations = await asyncio.wait_for(run_sync(search_web_context, query), timeout=8.0)
-            except asyncio.TimeoutError:
-                print(f"  ❌ RAG Timeout (8s limit exceeded)")
-                response_data.update({
-                    "mode": "refused",
-                    "response": "External search timed out. The service is currently experiencing high latency.",
-                    "confidence": 0.0,
-                    "source": "refused",
-                    "intent": "external_search",
-                    "refused": True
-                })
-                return response_data
+                final_response = "I cannot search for external information at this time. This capability is currently unavailable."
+                response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
+            else:
+                try:
+                    # Sync call for IO (as requested: call it synchronously if it's sync)
+                    context, citations = search_web_context(query)
+                    final_response = await self.reasoner.synthesize_with_context(query, context)
+                    
+                    if self._is_incomplete(final_response):
+                        final_response += "\n\n(This answer may be incomplete. You can ask a follow-up.)"
+                    final_response = self._clean_citations(final_response, citations)
+                    
+                    await collector.cache_response(query, final_response)
+                    response_data.update({
+                        "mode": "rag-external",
+                        "response": final_response,
+                        "context_used": True,
+                        "confidence": 1.0,
+                        "source": "rag",
+                        "citations": citations
+                    })
+                    log_intent = "rag-external"
+                except Exception as e:
+                    print(f"RAG failed: {e}")
+                    final_response = "External search failed or timed out."
+                    response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
 
-            # Synthesize with reasoner (Ollama)
-            final_response = await run_sync(self.reasoner.synthesize_with_context, query, context)
-            
-            # Response Completeness Guard
-            if self._is_incomplete(final_response):
-                final_response += "\n\n(This answer may be incomplete. You can ask a follow-up.)"
-            
-            # Citation Integrity Guard
-            final_response = self._clean_citations(final_response, citations)
-            
-            # Log for continuous learning (A+B=AB)
-            asyncio.create_task(collector.log_interaction(
-                query=query,
-                context=context,
-                response=final_response,
-                intent="rag-external",
-                source="rag"
-            ))
-            
-            # Cache result
-            await collector.cache_response(query, final_response)
-            
-            response_data.update({
-                "mode": "rag-external",
-                "response": final_response,
-                "context_used": True,
-                "confidence": 1.0, # RAG is considered high confidence by design intent
-                "source": "rag",
-                "intent": "external_search",
-                "refused": False,
-                "citations": citations
-            })
-            return response_data
-            
-        # Path B: Complex Reasoning (Chain of Thought)
+        # Path B: Complex Reasoning
         elif predicted_intent == "complex_reasoning":
-            reasoning_result = await run_sync(self.reasoner.reason, query)
-            
+            reasoning_result = await self.reasoner.reason(query)
+            final_response = reasoning_result["answer"]
             response_data.update({
                 "mode": "internal-reasoning",
-                "response": reasoning_result["answer"],
+                "response": final_response,
                 "reasoning_trace": reasoning_result["reasoning"],
                 "reasoning_used": True,
-                "confidence": 1.0,
-                "source": "model",
-                "intent": "complex_reasoning",
-                "refused": False
+                "confidence": 1.0
             })
-            return response_data
-            
-        # Path C: Simple Internal (Adapter/Base)
-        else: # simple_internal or fallback
-            # Semantic router still useful for domain selection within 'simple' intent
-            from app.routing.semantic_router import get_semantic_router
+
+        # Path C: Simple Internal
+        else:
             router = get_semantic_router()
             domain, conf = router.classify(query)
             
             if self.adapter_mgr.has_adapter(domain):
-                resp = await run_sync(self.adapter_mgr.generate_with_adapter, domain, query)
+                # Sync call for model inference (as requested)
+                resp = self.adapter_mgr.generate_with_adapter(domain, query)
+                final_response = resp
                 response_data.update({
                     "mode": "adapter",
                     "domain": domain,
                     "response": resp,
                     "adapter_used": True,
-                    "confidence": conf,
-                    "source": "model",
-                    "intent": "simple_internal", # adapter is subtype
-                    "refused": False
+                    "confidence": conf
                 })
             else:
-                # Path C: Epistemic Gating (Confidence-Based Abstention)
+                # Path C: Epistemic Gating
                 from app.models.confidence import get_confidence_estimator
                 from app.models.calibration import get_confidence_threshold
                 from app.routing.retrieval_gate import get_retrieval_gate
@@ -259,139 +219,69 @@ class Orchestrator:
                 from app.metrics.prometheus import gate_decision_total, hallucination_counter, refusal_counter, inference_latency
                 
                 start_time = time.time()
-                print(f"\n🧠 Epistemic Gating for: '{query}'")
-                
-                # Use reasoner interface for confidence estimation
-                def generate_fn(q: str, temperature: float = 0.1, max_new_tokens: int = 50) -> str:
-                    """Wrapper for confidence estimation using the abstract reasoner."""
-                    return self.reasoner.infer(q)
-                
-                # Estimate confidence (includes perturbation check)
                 estimator = get_confidence_estimator()
-                draft_response, confidence = await run_sync(estimator.estimate_confidence, query, generate_fn)
-
+                # Wrap async infer for the estimator
+                async def generate_wrapper(q, **kwargs): return await self.reasoner.infer(q)
                 
-                # Get auto-calibrated threshold
+                draft_response, confidence = await estimator.estimate_confidence(query, generate_wrapper)
                 threshold = get_confidence_threshold()
                 
-                print(f"  Confidence: {confidence:.3f} (threshold: {threshold:.3f})")
-                
-                # Confidence gate
                 if confidence >= threshold:
-                    # HIGH CONFIDENCE - Answer directly
-                    print(f"  ✅ Confident answer")
-                    
-                    # Update knowledge centroid for future retrieval gating
                     get_retrieval_gate().update_centroid(query)
-                    
                     gate_decision_total.labels(type="answer").inc()
                     inference_latency.labels(mode="confident").observe(time.time() - start_time)
                     
-                    # Cache confident answer
-                    await collector.cache_response(query, draft_response)
-                    
-                    # Log confident interaction
-                    asyncio.create_task(collector.log_interaction(
-                        query=query,
-                        context="internal-knowledge",
-                        response=draft_response,
-                        intent="internal-confident",
-                        confidence=confidence,
-                        source="model"
-                    ))
-
+                    final_response = draft_response
+                    await collector.cache_response(query, final_response)
                     response_data.update({
                         "mode": "internal-confident",
-                        "response": draft_response,
-                        "confidence": confidence,
-                        "source": "model",
-                        "intent": "simple_internal",
-                        "refused": False
+                        "response": final_response,
+                        "confidence": confidence
                     })
-                    return response_data
-                
-                # LOW CONFIDENCE - Check retrieval eligibility
-                print(f"  ⚠️ Low confidence - checking retrieval eligibility")
-                
-                if get_retrieval_gate().should_retrieve(query):
-                    # Novel query - trigger retrieval
-                    print(f"  🔍 Novel query detected - checking memory first")
-                    
-                    # 1. Check Memory (Feedback Retriever)
-                    matches = memory.search_similar(query, top_k=1, min_similarity=0.85)
-                    
-                    if matches:
-                        match = matches[0]
-                        print(f"  🧠 Memory hit! Reusing past answer (similarity: {match['similarity']})")
-                        await collector.cache_response(query, match["response"])
-                        response_data.update({
-                            "mode": "rag-memory",
-                            "response": match["response"],
-                            "memory_used": True,
-                            "similarity": match["similarity"],
-                            "confidence": match.get("confidence", 0.85),
-                            "source": "memory",
-                            "intent": "simple_internal", # fallback from epistemic
-                            "refused": False
-                        })
-                        return response_data
-
-                    # 2. Trigger active retrieval
-                    print(f"  🔍 Triggering external retrieval")
+                    log_intent = "internal-confident"
+                elif get_retrieval_gate().should_retrieve(query):
                     gate_decision_total.labels(type="search").inc()
-                    
-                    context = await run_sync(search_web_context, query)
-                    
-                    # Synthesize with reasoner (Ollama)
-                    synthesized = await run_sync(self.reasoner.synthesize_with_context, query, context)
-                    
+                    # Sync call
+                    context, citations = search_web_context(query)
+                    final_response = await self.reasoner.synthesize_with_context(query, context)
                     inference_latency.labels(mode="search").observe(time.time() - start_time)
                     
-                    # Log RAG interaction
-                    asyncio.create_task(collector.log_interaction(
-                        query=query,
-                        context=context,
-                        response=synthesized,
-                        intent="rag-fallback",
-                        source="rag"
-                    ))
-                    
-                    # Cache it
-                    await collector.cache_response(query, synthesized)
-
+                    await collector.cache_response(query, final_response)
                     response_data.update({
                         "mode": "rag",
-                        "response": synthesized,
+                        "response": final_response,
                         "context": context,
                         "confidence": confidence,
                         "retrieved": True,
-                        "source": "rag",
-                        "intent": "simple_internal",
-                        "refused": False
+                        "source": "rag"
                     })
-                    return response_data
-                
-                # LOW NOVELTY + LOW CONFIDENCE -> FORCED ABSTENTION
-                # Guardrail: Epistemic gating logic enforces forced abstention for low-confidence, known-frontier queries to prevent hallucinations.
-                print(f"  ⛔ Forced abstention (hallucination risk)")
-                gate_decision_total.labels(type="refuse").inc()
-                hallucination_counter.inc()
-                refusal_counter.inc()
-                inference_latency.labels(mode="fallback").observe(time.time() - start_time)
-                
-                # Update knowledge centroid anyway to mark we've "seen" the ignorance
-                get_retrieval_gate().update_centroid(query)
-                
-                response_data.update({
-                    "mode": "abstained",
-                    "response": CANONICAL_REFUSAL,
-                    "confidence": confidence,
-                    "abstained": True,
-                    "source": "refused",
-                    "intent": "simple_internal",
-                    "refused": True
-                })
-                return response_data
+                    log_intent = "rag-fallback"
+                else:
+                    gate_decision_total.labels(type="refuse").inc()
+                    hallucination_counter.inc()
+                    refusal_counter.inc()
+                    get_retrieval_gate().update_centroid(query)
+                    final_response = CANONICAL_REFUSAL
+                    response_data.update({
+                        "mode": "abstained",
+                        "response": final_response,
+                        "confidence": confidence,
+                        "abstained": True,
+                        "source": "refused",
+                        "refused": True
+                    })
+
+        # Final Centralized Awaited Side Effect
+        await collector.log_interaction(
+            query=query,
+            context=context or "none",
+            response=final_response,
+            intent=log_intent,
+            confidence=response_data.get("confidence", 0.0),
+            source=response_data.get("source", "model")
+        )
+        
+        return response_data
 
 # Global instance
 _orchestrator = None

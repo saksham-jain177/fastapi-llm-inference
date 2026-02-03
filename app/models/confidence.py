@@ -38,7 +38,7 @@ class ConfidenceEstimator:
     def __init__(self):
         self.encoder = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
     
-    def estimate_confidence(
+    async def estimate_confidence(
         self, 
         query: str, 
         generate_fn: Callable,
@@ -46,24 +46,17 @@ class ConfidenceEstimator:
     ) -> Tuple[str, float]:
         """
         Two-phase confidence estimation:
-        1. Low-temp sampling (check basic agreement)
+        1. Low-temperature sampling (check basic agreement)
         2. Perturbation check (catch false confidence)
-        
-        Args:
-            query: User query
-            generate_fn: Function(query, temperature, max_new_tokens) -> response
-            num_samples: Number of low-temp samples
-            
-        Returns:
-            (best_response, confidence_score)
         """
         # Phase 1: Low-temperature sampling
         low_temp_samples = []
         for _ in range(num_samples):
-            sample = generate_fn(query, temperature=0.7, max_new_tokens=50)
+            # generate_fn is now expected to be async
+            sample = await generate_fn(query, temperature=0.7, max_new_tokens=50)
             low_temp_samples.append(sample)
         
-        # Check low-temp agreement
+        # Check low-temp agreement (encoding is CPU bound, keep sync for now per 'discipline')
         embeddings = self.encoder.encode(low_temp_samples)
         low_temp_agreement = compute_agreement(embeddings)
         
@@ -80,7 +73,7 @@ class ConfidenceEstimator:
             "say 'I don't know' instead of guessing."
         )
         
-        perturbed_sample = generate_fn(refusal_prompt, temperature=1.2, max_new_tokens=50)
+        perturbed_sample = await generate_fn(refusal_prompt, temperature=1.2, max_new_tokens=50)
         
         print(f"  Phase 2: Perturbed = '{perturbed_sample[:60]}...'")
         

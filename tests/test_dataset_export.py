@@ -7,13 +7,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
 from scripts.training.export_high_confidence_dataset import export_curated_dataset
 
+pytestmark = pytest.mark.anyio
+
 @pytest.fixture
 def temp_dir():
     d = tempfile.mkdtemp()
     yield d
     shutil.rmtree(d)
 
-@pytest.mark.asyncio
 async def test_export_filtering_and_schema(temp_dir):
     """
     Verifies that the export script:
@@ -141,7 +142,6 @@ async def test_export_filtering_and_schema(temp_dir):
             assert meta["confidence_threshold"] == 0.85
             assert "exported_at" in meta
 
-@pytest.mark.asyncio
 async def test_export_guardrail_unauthorized():
     """Verifies that script exits if ALLOW_DATA_EXPORT is false."""
     with patch.dict(os.environ, {"ALLOW_DATA_EXPORT": "false"}):

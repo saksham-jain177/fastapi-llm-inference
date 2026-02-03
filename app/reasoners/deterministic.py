@@ -26,15 +26,9 @@ class DeterministicReasoner(Reasoner):
         "default": "Based on the query, here is a structured response addressing the key points.",
     }
 
-    def infer(self, prompt: str) -> str:
+    async def infer(self, prompt: str) -> str:
         """
         Generate a deterministic response based on prompt hashing.
-
-        Args:
-            prompt: User's input prompt
-
-        Returns:
-            Deterministic text response
         """
         prompt_lower = prompt.lower()
 
@@ -60,15 +54,9 @@ class DeterministicReasoner(Reasoner):
         prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:8]
         return f"{self.TEMPLATES['default']} [Response ID: {prompt_hash}]"
 
-    def reason(self, query: str) -> Dict[str, str]:
+    async def reason(self, query: str) -> Dict[str, str]:
         """
         Perform deterministic multi-step reasoning.
-
-        Args:
-            query: Query requiring reasoning
-
-        Returns:
-            Dictionary with reasoning trace and answer
         """
         prompt_hash = hashlib.md5(query.encode()).hexdigest()[:8]
 
@@ -86,16 +74,9 @@ class DeterministicReasoner(Reasoner):
             "full_response": f"{reasoning}\n\nAnswer: {answer}",
         }
 
-    def synthesize_with_context(self, query: str, context: str) -> str:
+    async def synthesize_with_context(self, query: str, context: str) -> str:
         """
         Synthesize answer from context deterministically.
-
-        Args:
-            query: User query
-            context: Retrieved context
-
-        Returns:
-            Synthesized answer
         """
         context_hash = hashlib.md5(context.encode()).hexdigest()[:6]
         query_hash = hashlib.md5(query.encode()).hexdigest()[:6]

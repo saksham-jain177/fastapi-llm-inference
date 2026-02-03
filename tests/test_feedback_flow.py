@@ -8,6 +8,8 @@ import os
 os.environ["USE_MOCK"] = "true"
 os.environ["API_KEY"] = "test-key"
 
+pytestmark = pytest.mark.anyio
+
 from app.main import app
 
 class TestFeedbackFlow:
@@ -16,7 +18,6 @@ class TestFeedbackFlow:
     def client(self):
         return TestClient(app)
         
-    @pytest.mark.asyncio
     async def test_feedback_writes_to_mongo(self, client):
         """Verify that feedback submission triggers a Mongo write."""
         
