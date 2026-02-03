@@ -152,3 +152,41 @@ class TestRoutingLogic:
             assert "[Source 2]" not in result["response"]
             # Extra space preserved from re.sub
             assert result["response"] == "This is a fact  and another ."
+
+    async def test_orchestrator_routes_ambiguous_query_to_rag(self):
+        """Verify that a query below the semantic threshold routes to RAG."""
+        from app.routing.orchestrator import Orchestrator
+        from unittest.mock import AsyncMock, patch, MagicMock
+
+        query = "Some completely ambiguous query about PageIndex"
+        
+        with patch("app.routing.orchestrator.get_semantic_router") as mock_get_router, \
+             patch("app.routing.orchestrator.get_data_collector") as mock_get_collector, \
+             patch("app.routing.orchestrator.search_web_context") as mock_search, \
+             patch("app.routing.orchestrator.get_reasoner") as mock_get_reasoner, \
+             patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
+            
+            # 1. Setup Router to return 'unknown'
+            mock_router = MagicMock()
+            mock_router.classify.return_value = ("unknown", 0.15)
+            mock_get_router.return_value = mock_router
+            
+            # 2. Setup Collector
+            mock_collector = AsyncMock()
+            mock_collector.get_cached_response.return_value = None
+            mock_get_collector.return_value = mock_collector
+            
+            # 3. Setup RAG Search & Reasoner
+            mock_search.return_value = ("PageIndex is a C# concept", ["Source 1"])
+            mock_reasoner = AsyncMock()
+            mock_reasoner.synthesize_with_context.return_value = "PageIndex is found in pagination."
+            mock_get_reasoner.return_value = mock_reasoner
+            
+            orch = Orchestrator()
+            result = await orch.route_and_execute(query)
+            
+            # 4. Verify RAG was triggered
+            assert result["mode"] == "rag-external"
+            assert "pagination" in result["response"]
+            mock_search.assert_called_once_with(query)
+            mock_reasoner.synthesize_with_context.assert_called_once()
