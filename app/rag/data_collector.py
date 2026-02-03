@@ -52,6 +52,23 @@ class DataCollector:
         """
         Log a single interaction to MongoDB (primary) or JSONL (backup).
         """
+        # Calculate metadata
+        char_count = len(response)
+        word_count = len(response.split())
+        
+        # Truncation detected via same logic as orchestrator
+        is_truncated = False
+        if response:
+            clean_resp = response.strip()
+            valid_endings = ('.', '!', '?', '"', "'", '`', '}')
+            trailing_indicators = ('and', 'or', 'but', 'the', 'a', 'an', 'with', 'to', 'of', 'in', 'on', 'at', 'by', 'for', 'which', 'that')
+            if not clean_resp.endswith(valid_endings) or clean_resp.lower().endswith(trailing_indicators):
+                is_truncated = True
+
+        conf_bucket = "low"
+        if confidence >= 0.85: conf_bucket = "high"
+        elif confidence >= 0.6: conf_bucket = "medium"
+
         entry = {
             "timestamp": datetime.utcnow().isoformat(),
             "query": query,
@@ -60,7 +77,13 @@ class DataCollector:
             "intent": intent,
             "feedback": feedback,
             "confidence": confidence,
+            "confidence_bucket": conf_bucket,
             "source": source,
+            "metadata": {
+                "char_length": char_count,
+                "word_length": word_count,
+                "is_truncated": is_truncated
+            },
             # Format for Qwen fine-tuning
             "training_sample": {
                 "instruction": query,

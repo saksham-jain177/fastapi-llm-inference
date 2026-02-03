@@ -29,15 +29,19 @@ Question: {query}
 
 Think carefully and show your reasoning:"""
 
-    SYNTHESIS_PROMPT = """Based on the following information, provide a clear and concise answer.
+    SYNTHESIS_PROMPT = """Based on the following context, provide a comprehensive answer.
 
 Context:
 {context}
 
 Question: {query}
 
-Synthesize the information above and provide a comprehensive answer.
-Cite your sources using [Source X] format where appropriate."""
+Instructions:
+1. Group your findings into logical claims.
+2. For every claim, cite the relevant [Source X] marker immediately after the claim.
+3. Ensure every sentence is semantically complete. Do not cut off mid-thought.
+4. If you have a lot of information, prioritize the most relevant points and finish with a strong summary sentence if you are near the length limit.
+5. End your response with a clear concluding punctuation mark."""
 
     def __init__(self):
         """Initialize Ollama reasoner with configuration."""
