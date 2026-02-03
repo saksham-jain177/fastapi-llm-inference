@@ -8,6 +8,8 @@ import os
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
 
+pytestmark = pytest.mark.anyio
+
 # Set required env vars BEFORE importing app
 os.environ["API_KEY"] = "test-key"
 os.environ["USE_MOCK"] = "true"
@@ -36,7 +38,6 @@ class TestSecurityGuards:
         assert data["source"] == "refused"
         assert "exceeds" in data["answer"].lower() or "length" in data["answer"].lower()
     
-    @pytest.mark.asyncio
     async def test_rag_refused_without_tavily_key(self):
         """Verify RAG path refuses cleanly when TAVILY_API_KEY is missing."""
         from app.routing.orchestrator import Orchestrator
@@ -65,7 +66,6 @@ class TestSecurityGuards:
         assert response.status_code == 413
         assert "Too long" in response.json()["detail"] or "too long" in response.json()["detail"]
 
-    @pytest.mark.asyncio
     async def test_adaptive_rate_limit(self):
         """Verify /infer-adaptive returns 429 on rate limit."""
         from app.main import check_rate_limit
@@ -85,7 +85,6 @@ class TestSecurityGuards:
             assert response.status_code == 429
             assert "limit exceeded" in response.json()["detail"]
 
-    @pytest.mark.asyncio
     async def test_rag_timeout_handling(self):
         """Verify orchestrator handles RAG timeout gracefully."""
         from app.routing.orchestrator import Orchestrator

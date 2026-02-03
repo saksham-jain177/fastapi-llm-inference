@@ -50,34 +50,28 @@ Instructions:
         self._client = None
 
     def _get_client(self):
-        """Lazy-load Ollama client. Import happens here, not at module level."""
+        """Lazy-load Ollama AsyncClient. Import happens here, not at module level."""
         if self._client is None:
             try:
-                import ollama
+                from ollama import AsyncClient
             except ImportError:
                 raise RuntimeError(
                     "Ollama Python module not installed. Install with: pip install ollama. "
                     "Note: The 'ollama serve' process must also be running."
                 )
             if self.base_url != "http://localhost:11434":
-                self._client = ollama.Client(host=self.base_url)
+                self._client = AsyncClient(host=self.base_url)
             else:
-                self._client = ollama.Client()
+                self._client = AsyncClient()
         return self._client
 
-    def infer(self, prompt: str) -> str:
+    async def infer(self, prompt: str) -> str:
         """
         Generate a response using Ollama.
-
-        Args:
-            prompt: User's input prompt
-
-        Returns:
-            Generated text response
         """
         try:
             client = self._get_client()
-            response = client.chat(
+            response = await client.chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 options={
@@ -89,21 +83,15 @@ Instructions:
         except Exception as e:
             raise RuntimeError(f"Ollama inference failed: {e}") from e
 
-    def reason(self, query: str) -> Dict[str, str]:
+    async def reason(self, query: str) -> Dict[str, str]:
         """
         Perform multi-step reasoning on a query.
-
-        Args:
-            query: Complex query requiring reasoning
-
-        Returns:
-            Dictionary with 'reasoning' (steps) and 'answer' (final result)
         """
         try:
             client = self._get_client()
             prompt = self.REASONING_PROMPT.format(query=query)
 
-            response = client.chat(
+            response = await client.chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 options={
@@ -137,22 +125,15 @@ Instructions:
         except Exception as e:
             raise RuntimeError(f"Ollama reasoning failed: {e}") from e
 
-    def synthesize_with_context(self, query: str, context: str) -> str:
+    async def synthesize_with_context(self, query: str, context: str) -> str:
         """
         Synthesize answer from context (for RAG).
-
-        Args:
-            query: User query
-            context: Retrieved context from Tavily/RAG
-
-        Returns:
-            Synthesized answer
         """
         try:
             client = self._get_client()
             prompt = self.SYNTHESIS_PROMPT.format(query=query, context=context)
 
-            response = client.chat(
+            response = await client.chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 options={

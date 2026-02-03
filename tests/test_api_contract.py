@@ -8,7 +8,8 @@ from app.routing.orchestrator import Orchestrator
 os.environ["USE_DETERMINISTIC_INFERENCE"] = "true"
 os.environ["API_KEY"] = "test-secret"
 
-@pytest.mark.asyncio
+pytestmark = pytest.mark.anyio
+
 async def test_api_contract_response_shape():
     """
     Verify that the API returns the correct shape and types:
@@ -63,7 +64,6 @@ async def test_api_contract_response_shape():
         assert "citations" in data
         assert isinstance(data["citations"], list)
         
-@pytest.mark.asyncio
 async def test_api_contract_refusal():
     """Verify refusal flag behavior."""
     
