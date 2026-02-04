@@ -18,9 +18,17 @@ def test_health():
 def test_infer_with_mock_env():
     import os
     from unittest.mock import patch
+    from app.reasoners.factory import reset_reasoner
+    from app.routing.semantic_router import reset_semantic_router
+    from app.models.adapter_manager import reset_adapter_manager
+    
+    # Reset to ensure we don't use a cached non-deterministic components
+    reset_reasoner()
+    reset_semantic_router()
+    reset_adapter_manager()
     
     # Mock the environment variable just for this test
-    with patch.dict(os.environ, {"API_KEY": "test-secret"}):
+    with patch.dict(os.environ, {"API_KEY": "test-secret", "USE_DETERMINISTIC_INFERENCE": "true"}):
         response = client.post("/infer", json={"prompt": "test"})
         assert response.status_code == 200
         assert "answer" in response.json()

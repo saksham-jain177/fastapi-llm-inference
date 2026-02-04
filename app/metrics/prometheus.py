@@ -98,7 +98,7 @@ memory_short_circuit_confidence_avg = Histogram(
 gate_decision_total = Counter(
     'gate_decision_total',
     'Total count of epistemic gate decisions',
-    ['type'] # answer, search, refuse
+    ['decision', 'reason'] # allow/high_conf, fallback_rag/low_conf_novel, refuse/low_conf_stale
 )
 
 hallucination_counter = Counter(

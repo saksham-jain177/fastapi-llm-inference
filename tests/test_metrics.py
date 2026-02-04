@@ -29,10 +29,11 @@ def test_metrics_increment_on_gate():
     from app.metrics.prometheus import gate_decision_total
     
     # Get initial value for a specific label
-    initial_value = gate_decision_total.labels(type="answer")._value.get()
+    initial_value = gate_decision_total.labels(decision="allow", reason="high_confidence")._value.get()
     
     # Increment
-    gate_decision_total.labels(type="answer").inc()
+    gate_decision_total.labels(decision="allow", reason="high_confidence").inc()
     
-    new_value = gate_decision_total.labels(type="answer")._value.get()
+    # Check new value
+    new_value = gate_decision_total.labels(decision="allow", reason="high_confidence")._value.get()
     assert new_value == initial_value + 1

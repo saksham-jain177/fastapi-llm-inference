@@ -164,9 +164,10 @@ class Orchestrator:
             router = get_semantic_router()
             domain, conf = router.classify(query)
 
-            # FORCE RAG if domain is unknown (below semantic threshold)
+            # FORCE RAG/REFUSAL if domain is unknown (below semantic threshold)
+            # This is the "Ambiguity is terminal" rule
             if domain == "unknown":
-                print(f"[Orchestrator] Domain unknown (conf: {conf:.3f}), forcing RAG path")
+                print(f"[Orchestrator] Domain unknown (semantic_conf: {conf:.3f}), blocking model path")
                 final_response, context, citations, log_intent = await self._execute_external_rag(query, collector, response_data)
             elif self.adapter_mgr.has_adapter(domain):
                 # Sync call for model inference (as requested)
@@ -186,59 +187,56 @@ class Orchestrator:
                 from app.routing.retrieval_gate import get_retrieval_gate
                 from app.constants import CANONICAL_REFUSAL
                 from app.metrics.prometheus import gate_decision_total, hallucination_counter, refusal_counter, inference_latency
-                
-                start_time = time.time()
+
                 estimator = get_confidence_estimator()
-                # Wrap async infer for the estimator
-                async def generate_wrapper(q, **kwargs): return await self.reasoner.infer(q)
                 
-                draft_response, confidence = await estimator.estimate_confidence(query, generate_wrapper)
-                threshold = get_confidence_threshold()
+                # Wrapper to use with estimator
+                async def generate_wrapper(p, temperature=0.3, max_new_tokens=256):
+                    # Logic to use base model via adapter_mgr (which handles lazy loading)
+                    return self.adapter_mgr.generate_with_adapter("base", p, temperature=temperature, max_new_tokens=max_new_tokens)
+
+                print(f"[Orchestrator] Entering epistemic gate for query: '{query}'")
+                draft_response, epistemic_conf = await estimator.estimate_confidence(query, generate_wrapper)
                 
-                if confidence >= threshold:
-                    get_retrieval_gate().update_centroid(query)
-                    gate_decision_total.labels(type="answer").inc()
-                    inference_latency.labels(mode="confident").observe(time.time() - start_time)
-                    
+                gate_threshold = get_confidence_threshold("simple_internal")
+                
+                # RULE: Ambiguity is terminal.
+                # Reliability = Semantic AND Epistemic
+                is_reliable = (conf >= 0.35) and (epistemic_conf >= gate_threshold)
+
+                if is_reliable:
+                    print(f"  → Gating PASSED (semantic: {conf:.2f}, epistemic: {epistemic_conf:.2f})")
                     final_response = draft_response
-                    await collector.cache_response(query, final_response)
                     response_data.update({
-                        "mode": "internal-confident",
+                        "mode": "model",
                         "response": final_response,
-                        "confidence": confidence
+                        "confidence": epistemic_conf,  # We report epistemic here as it's the more conservative one
+                        "semantic_confidence": conf
                     })
-                    log_intent = "internal-confident"
-                elif get_retrieval_gate().should_retrieve(query):
-                    gate_decision_total.labels(type="search").inc()
-                    # Sync call
-                    context, citations = search_web_context(query)
-                    final_response = await self.reasoner.synthesize_with_context(query, context)
-                    inference_latency.labels(mode="search").observe(time.time() - start_time)
-                    
-                    await collector.cache_response(query, final_response)
-                    response_data.update({
-                        "mode": "rag",
-                        "response": final_response,
-                        "context": context,
-                        "confidence": confidence,
-                        "retrieved": True,
-                        "source": "rag"
-                    })
-                    log_intent = "rag-fallback"
+                    gate_decision_total.labels(decision="allow", reason="high_confidence").inc()
                 else:
-                    gate_decision_total.labels(type="refuse").inc()
-                    hallucination_counter.inc()
-                    refusal_counter.inc()
-                    get_retrieval_gate().update_centroid(query)
-                    final_response = CANONICAL_REFUSAL
-                    response_data.update({
-                        "mode": "abstained",
-                        "response": final_response,
-                        "confidence": confidence,
-                        "abstained": True,
-                        "source": "refused",
-                        "refused": True
-                    })
+                    print(f"  → Gating FAILED (semantic: {conf:.2f}, epistemic: {epistemic_conf:.2f})")
+                    # Check novelty to decide between RAG or Refusal
+                    retrieval_gate = get_retrieval_gate()
+                    should_search = retrieval_gate.should_trigger_retrieval(query)
+                    
+                    if should_search:
+                        print("    → Novelty high, falling back to RAG")
+                        final_response, context, citations, log_intent = await self._execute_external_rag(query, collector, response_data)
+                        gate_decision_total.labels(decision="fallback_rag", reason="low_confidence_novel").inc()
+                    else:
+                        print("    → Novelty low but unsure, refusing to guess")
+                        final_response = CANONICAL_REFUSAL
+                        response_data.update({
+                            "mode": "refused",
+                            "response": final_response,
+                            "refused": True,
+                            "source": "refused",
+                            "confidence": epistemic_conf
+                        })
+                        gate_decision_total.labels(decision="refuse", reason="low_confidence_stale").inc()
+                        refusal_counter.inc()
+                        log_intent = "refused"
 
         # Final Centralized Awaited Side Effect
         await collector.log_interaction(

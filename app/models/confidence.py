@@ -1,11 +1,6 @@
-"""
-Confidence estimation for small language models using sampling disagreement.
-Implements perturbation check to catch false confidence.
-"""
-
-from sentence_transformers import SentenceTransformer
-from typing import Tuple, Callable
 import numpy as np
+from typing import Tuple, Callable
+import os
 
 
 def compute_agreement(embeddings: np.ndarray) -> float:
@@ -36,7 +31,13 @@ class ConfidenceEstimator:
     """
     
     def __init__(self):
-        self.encoder = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        self.use_deterministic = os.getenv("USE_DETERMINISTIC_INFERENCE", "false").lower() == "true"
+        if self.use_deterministic:
+            print("[Deterministic Mode] Confidence estimator using heuristics (Offline)")
+            self.encoder = None
+        else:
+            from sentence_transformers import SentenceTransformer
+            self.encoder = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
     
     async def estimate_confidence(
         self, 
@@ -57,8 +58,17 @@ class ConfidenceEstimator:
             low_temp_samples.append(sample)
         
         # Check low-temp agreement (encoding is CPU bound, keep sync for now per 'discipline')
-        embeddings = self.encoder.encode(low_temp_samples)
-        low_temp_agreement = compute_agreement(embeddings)
+        if self.use_deterministic:
+            # Deterministic agreement heuristic: base it on length variance or just return 1.0 for CI
+            # We must use the samples to decide agreement to support mocked tests
+            unique_samples = set(low_temp_samples)
+            if len(unique_samples) == 1:
+                 low_temp_agreement = 1.0
+            else:
+                 low_temp_agreement = 0.5
+        else:
+            embeddings = self.encoder.encode(low_temp_samples)
+            low_temp_agreement = compute_agreement(embeddings)
         
         print(f"  Phase 1: Low-temp agreement = {low_temp_agreement:.3f}")
         
@@ -82,6 +92,9 @@ class ConfidenceEstimator:
         if any(kw in perturbed_sample.lower() for kw in refusal_keywords):
             print(f"  → Perturbation triggered refusal, downgrading confidence")
             return low_temp_samples[0], 0.5  # Downgrade
+
+        if self.use_deterministic:
+            return low_temp_samples[0], low_temp_agreement
         
         # Compare all samples (including perturbed)
         all_samples = low_temp_samples + [perturbed_sample]
