@@ -3,8 +3,6 @@ Semantic query classifier using sentence transformers.
 Routes queries to appropriate domain-specific adapters.
 """
 
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from typing import Tuple, List
 from pathlib import Path
@@ -54,11 +52,12 @@ class SemanticRouter:
         self.use_deterministic = os.getenv("USE_DETERMINISTIC_INFERENCE", "false").lower() == "true"
         
         if self.use_deterministic:
-            print("[Deterministic Mode] Semantic router using keyword-based routing")
+            print("[Deterministic Mode] Semantic router using keyword-based routing (Offline)")
             self.model = None
             self.domain_exemplar_embeddings = {}
             return
 
+        from sentence_transformers import SentenceTransformer
         print(f"Loading semantic router: {model_name}")
         self.model = SentenceTransformer(model_name)
         
@@ -94,6 +93,7 @@ class SemanticRouter:
 
         # Encode query
         query_embedding = self.model.encode([query])[0]
+        from sklearn.metrics.pairwise import cosine_similarity
         
         # Compute MAX similarity to each domain
         similarities = {}
@@ -137,6 +137,7 @@ class SemanticRouter:
             return [(domain, conf)]
 
         query_embedding = self.model.encode([query])[0]
+        from sklearn.metrics.pairwise import cosine_similarity
         
         similarities = {}
         # Fixed: Use domain_exemplar_embeddings and take MAX for consistency with classify()
@@ -166,3 +167,8 @@ def get_semantic_router() -> SemanticRouter:
     if _semantic_router is None:
         _semantic_router = SemanticRouter()
     return _semantic_router
+
+def reset_semantic_router():
+    """Reset the singleton instance."""
+    global _semantic_router
+    _semantic_router = None

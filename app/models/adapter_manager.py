@@ -135,7 +135,7 @@ class AdapterManager:
         print(f"Loaded {domain} adapter successfully")
         return model, tokenizer
     
-    def generate_with_adapter(self, domain: str, prompt: str, max_new_tokens: int = 256) -> str:
+    def generate_with_adapter(self, domain: str, prompt: str, max_new_tokens: int = 256, temperature: float = 0.5) -> str:
         """
         Generate response using domain-specific adapter.
         
@@ -143,12 +143,16 @@ class AdapterManager:
             domain: Domain name
             prompt: User prompt
             max_new_tokens: Max tokens to generate
+            temperature: Sampling temperature
             
         Returns:
             Generated response
         """
+        use_det = os.getenv("USE_DETERMINISTIC_INFERENCE", "false").lower()
+        if use_det == "true":
+            return f"[Deterministic] Mock response for {domain} adapter: {prompt[:30]}..."
+
         import torch
-        
         model, tokenizer = self.load_adapter_model(domain)
         
         # Format as instruction
@@ -160,7 +164,7 @@ class AdapterManager:
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                temperature=0.5,
+                temperature=temperature,
                 do_sample=True,
                 top_p=0.85,
                 repetition_penalty=1.1,
@@ -183,3 +187,8 @@ def get_adapter_manager() -> AdapterManager:
     if _adapter_manager is None:
         _adapter_manager = AdapterManager()
     return _adapter_manager
+
+def reset_adapter_manager():
+    """Reset the singleton instance."""
+    global _adapter_manager
+    _adapter_manager = None

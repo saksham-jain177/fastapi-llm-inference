@@ -200,8 +200,14 @@ def infer(request: InferenceRequest, req: Request):
     
     pass 
     
+    pass 
+    
     # Hardware-independent fallback (CI/Staging)
-    if USE_MOCK:
+    # Check dynamically to allow testing overrides
+    use_mock = os.getenv("USE_MOCK", "false").lower() == "true"
+    use_det = os.getenv("USE_DETERMINISTIC_INFERENCE", "false").lower() == "true"
+    
+    if use_mock or use_det:
         responses = [
             "The sky is blue because of Rayleigh scattering.",
             "To be or not to be, that is the question.",
@@ -210,9 +216,11 @@ def infer(request: InferenceRequest, req: Request):
         ]
         response_text = random.choice(responses)
         return {
-            "response": f"LLM says: {response_text}",
-            "prompt_received": request.prompt,
-            "mode": "mock"
+            "answer": f"LLM says: {response_text}",
+            "confidence": 1.0,
+            "intent": "mock",
+            "source": "mock",
+            "refused": False
         }
     
     # Use real quantized model
