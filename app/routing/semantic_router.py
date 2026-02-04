@@ -89,7 +89,8 @@ class SemanticRouter:
                 return "medical", 1.0
             if "law" in query_lower or "legal" in query_lower or "contract" in query_lower:
                 return "legal", 1.0
-            return "general", 0.5
+            # Strict Truth: If we don't know the domain via strict keyword, we don't guess.
+            return "unknown", 0.0
 
         # Encode query
         query_embedding = self.model.encode([query])[0]

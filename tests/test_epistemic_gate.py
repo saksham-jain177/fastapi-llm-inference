@@ -101,6 +101,6 @@ async def test_orchestrator_decision_flow():
         result = await orch.route_and_execute("What is the capital of France?")
 
         assert "response" in result
-        assert result["mode"] in ["internal-confident", "abstained", "rag", "adapter", "model"]
+        assert result["mode"] in ["model", "rag-external", "adapter", "refused"]
         mock_collector.log_interaction.assert_called_once()
 
