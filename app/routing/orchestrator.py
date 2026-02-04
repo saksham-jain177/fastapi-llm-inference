@@ -5,7 +5,6 @@ Routing Orchestrator.
  Depends only on abstract Reasoner interface. Backend selection is deferred to runtime via factory.
 """
 
-from app.routing.query_analyzer import get_query_analyzer
 from app.reasoners.factory import get_reasoner
 from app.models.adapter_manager import get_adapter_manager
 from app.rag.retrieval import search_web_context
@@ -19,7 +18,7 @@ from app.metrics.prometheus import memory_hit_total
 
 class Orchestrator:
     def __init__(self):
-        self.analyzer = get_query_analyzer()
+        # self.analyzer = get_query_analyzer() # REMOVED: Heuristic-based analysis
         self.reasoner = get_reasoner()  # Factory-provided, interface-only
         self.adapter_mgr = get_adapter_manager()
 
@@ -62,39 +61,26 @@ class Orchestrator:
 
     async def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
         """
-        Execute full request pipeline:
-        1. Analyze Query (Intent Classification)
-        2. Route to appropriate handler
-        3. Execute (RAG, Reasoning, or Base Inference)
+        Execute full request pipeline using Truth-First Inference.
         
-        Args:
-            query: User's prompt
-            feedback_intent: Optional ground truth for metric logging (tp/fp etc)
+        Path:
+        1. Semantic Classification (Domain)
+        2. Adapter Check (Specialized Knowledge)
+        3. Knowledge Gate (General Knowledge)
+           -> RAG (if unknown/uncertain) 
+           -> Model (only if strictly confident)
         """
-        # 1. Analysis
-        analysis = self.analyzer.analyze(query)
-        predicted_intent = analysis["intent"]
-        
-        # Log accuracy metrics if feedback is provided
-        if feedback_intent:
-            from app.metrics.prometheus import (
-                classification_tp, classification_fp, 
-                classification_fn, classification_tn
-            )
-            if predicted_intent == feedback_intent:
-                classification_tp.labels(intent=predicted_intent).inc()
-            else:
-                classification_fp.labels(intent=predicted_intent).inc()
-                classification_fn.labels(intent=feedback_intent).inc()
+        # 1. Semantic Classification
+        router = get_semantic_router()
+        domain, semantic_conf = router.classify(query)
         
         response_data = {
             "prompt_received": query,
-            "analysis": analysis,
             "timestamp": time.time(),
             "refused": False,
             "confidence": 0.0,
             "source": "model",
-            "intent": predicted_intent
+            "intent": domain
         }
         
         # Redis Hot Cache Lookup
@@ -112,131 +98,117 @@ class Orchestrator:
                 })
                 return response_data
 
-        # 3. Routing & Execution
         context = ""
         final_response = ""
-        log_intent = predicted_intent
+        log_intent = domain
 
-        # Path A: External Search (RAG)
-        if predicted_intent == "external_search":
-            try:
-                # 1. Memory lookup (Short-circuit if we have high-confidence grounded answer)
-                memory_retriever = get_feedback_retriever()
-                if memory_retriever:
-                    # search_similar is SYNC
-                    memory_hits = memory_retriever.search_similar(query, top_k=1)
-                    if memory_hits:
-                        match = memory_hits[0]
-                        eff_conf = match["confidence"]
-                        if eff_conf >= 0.9:
-                            print(f"  🧠 Memory hit! Reusing high-confidence answer")
-                            memory_hit_total.inc()
-                            await collector.cache_response(query, match["response"])
-                            response_data.update({
-                                "mode": "memory",
-                                "response": match["response"],
-                                "memory_used": True,
-                                "similarity": match["similarity"],
-                                "confidence": eff_conf,
-                                "source": "memory"
-                            })
-                            await collector.log_interaction(query, "memory-hit", match["response"], "external_search", confidence=eff_conf, source="memory")
-                            return response_data
-            except Exception as e:
-                print(f"Memory lookup failed: {e}")
-
-            final_response, context, citations, log_intent = await self._execute_external_rag(query, collector, response_data)
-
-        # Path B: Complex Reasoning
-        elif predicted_intent == "complex_reasoning":
-            reasoning_result = await self.reasoner.reason(query)
-            final_response = reasoning_result["answer"]
+        # Path A: Specialized Adapter (Strictly matched domain)
+        if self.adapter_mgr.has_adapter(domain):
+            print(f"[Orchestrator] Using adapter for domain: {domain}")
+            # Sync call for model inference
+            resp = self.adapter_mgr.generate_with_adapter(domain, query)
+            final_response = resp
             response_data.update({
-                "mode": "internal-reasoning",
-                "response": final_response,
-                "reasoning_trace": reasoning_result["reasoning"],
-                "reasoning_used": True,
-                "confidence": 1.0
+                "mode": "adapter",
+                "domain": domain,
+                "response": resp,
+                "adapter_used": True,
+                "confidence": semantic_conf
             })
-
-        # Path C: Simple Internal
+            
+        # Path B: Knowledge Gate (General/Unknown)
         else:
-            router = get_semantic_router()
-            domain, conf = router.classify(query)
+            from app.models.confidence import get_confidence_estimator
+            from app.routing.knowledge_gate import get_knowledge_gate
+            from app.constants import CANONICAL_REFUSAL
+            from app.metrics.prometheus import gate_decision_total, refusal_counter
 
-            # FORCE RAG/REFUSAL if domain is unknown (below semantic threshold)
-            # This is the "Ambiguity is terminal" rule
-            if domain == "unknown":
-                print(f"[Orchestrator] Domain unknown (semantic_conf: {conf:.3f}), blocking model path")
+            gate = get_knowledge_gate()
+            
+            # CRITICAL INSIGHT:
+            # For general queries, we have NO EVIDENCE until we search.
+            # The model can generate a draft, but that's not evidence—it's speculation.
+            # 
+            # Evidence sources:
+            # - Adapters (domain-specific knowledge) ← handled in Path A
+            # - RAG retrieval (external grounding) ← not yet available
+            # - Internal KB/docs ← not implemented
+            #
+            # Therefore: has_evidence = False for all general queries
+            
+            has_evidence = False
+            
+            # DECIDE via Knowledge Gate (Evidence-First)
+            # We pass epistemic_confidence=None because we haven't generated yet
+            decision = gate.decide(
+                semantic_score=semantic_conf,
+                has_evidence=has_evidence,
+                epistemic_confidence=None  # Not relevant without evidence
+            )
+            
+            print(f"  → KnowledgeGate Decision: {decision.upper()} (semantic: {semantic_conf:.2f}, has_evidence: {has_evidence})")
+            
+            if decision == "rag":
+                # Search for evidence
+                print("    → No evidence available, searching...")
                 final_response, context, citations, log_intent = await self._execute_external_rag(query, collector, response_data)
-            elif self.adapter_mgr.has_adapter(domain):
-                # Sync call for model inference (as requested)
-                resp = self.adapter_mgr.generate_with_adapter(domain, query)
-                final_response = resp
+                gate_decision_total.labels(decision="fallback_rag", reason="no_evidence").inc()
+                
+            elif decision == "refuse":
+                print("    → Explicit refusal (no safe path)")
+                final_response = CANONICAL_REFUSAL
                 response_data.update({
-                    "mode": "adapter",
-                    "domain": domain,
-                    "response": resp,
-                    "adapter_used": True,
-                    "confidence": conf
+                    "mode": "refused",
+                    "response": final_response,
+                    "refused": True,
+                    "source": "refused",
+                    "confidence": 0.0
                 })
-            else:
-                # Path C: Epistemic Gating
-                from app.models.confidence import get_confidence_estimator
-                from app.models.calibration import get_confidence_threshold
-                from app.routing.retrieval_gate import get_retrieval_gate
-                from app.constants import CANONICAL_REFUSAL
-                from app.metrics.prometheus import gate_decision_total, hallucination_counter, refusal_counter, inference_latency
-
+                gate_decision_total.labels(decision="refuse", reason="no_evidence").inc()
+                refusal_counter.inc()
+                log_intent = "refused"
+                
+            elif decision == "model":
+                # This path should NEVER be reached for general queries without evidence
+                # But if it somehow is (e.g., future KB integration), we need epistemic check
                 estimator = get_confidence_estimator()
                 
-                # Wrapper to use with estimator
                 async def generate_wrapper(p, temperature=0.3, max_new_tokens=256):
-                    # Logic to use base model via adapter_mgr (which handles lazy loading)
                     return self.adapter_mgr.generate_with_adapter("base", p, temperature=temperature, max_new_tokens=max_new_tokens)
-
-                print(f"[Orchestrator] Entering epistemic gate for query: '{query}'")
+                
+                print(f"[Orchestrator] Evidence-backed path - checking epistemic confidence")
                 draft_response, epistemic_conf = await estimator.estimate_confidence(query, generate_wrapper)
                 
-                gate_threshold = get_confidence_threshold("simple_internal")
+                # Re-check with epistemic confidence
+                final_decision = gate.decide(
+                    semantic_score=semantic_conf,
+                    has_evidence=True,  # Assuming we got here via evidence
+                    epistemic_confidence=epistemic_conf
+                )
                 
-                # RULE: Ambiguity is terminal.
-                # Reliability = Semantic AND Epistemic
-                is_reliable = (conf >= 0.35) and (epistemic_conf >= gate_threshold)
-
-                if is_reliable:
-                    print(f"  → Gating PASSED (semantic: {conf:.2f}, epistemic: {epistemic_conf:.2f})")
+                if final_decision == "model":
                     final_response = draft_response
                     response_data.update({
                         "mode": "model",
                         "response": final_response,
-                        "confidence": epistemic_conf,  # We report epistemic here as it's the more conservative one
-                        "semantic_confidence": conf
+                        "confidence": epistemic_conf,
+                        "semantic_confidence": semantic_conf
                     })
-                    gate_decision_total.labels(decision="allow", reason="high_confidence").inc()
+                    gate_decision_total.labels(decision="allow", reason="evidence_backed").inc()
                 else:
-                    print(f"  → Gating FAILED (semantic: {conf:.2f}, epistemic: {epistemic_conf:.2f})")
-                    # Check novelty to decide between RAG or Refusal
-                    retrieval_gate = get_retrieval_gate()
-                    should_search = retrieval_gate.should_trigger_retrieval(query)
-                    
-                    if should_search:
-                        print("    → Novelty high, falling back to RAG")
-                        final_response, context, citations, log_intent = await self._execute_external_rag(query, collector, response_data)
-                        gate_decision_total.labels(decision="fallback_rag", reason="low_confidence_novel").inc()
-                    else:
-                        print("    → Novelty low but unsure, refusing to guess")
-                        final_response = CANONICAL_REFUSAL
-                        response_data.update({
-                            "mode": "refused",
-                            "response": final_response,
-                            "refused": True,
-                            "source": "refused",
-                            "confidence": epistemic_conf
-                        })
-                        gate_decision_total.labels(decision="refuse", reason="low_confidence_stale").inc()
-                        refusal_counter.inc()
-                        log_intent = "refused"
+                    # Epistemic check failed
+                    print("    → Epistemic confidence too low, refusing")
+                    final_response = CANONICAL_REFUSAL
+                    response_data.update({
+                        "mode": "refused",
+                        "response": final_response,
+                        "refused": True,
+                        "source": "refused",
+                        "confidence": epistemic_conf
+                    })
+                    gate_decision_total.labels(decision="refuse", reason="low_epistemic").inc()
+                    refusal_counter.inc()
+                    log_intent = "refused"
 
         # Final Centralized Awaited Side Effect
         await collector.log_interaction(

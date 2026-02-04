@@ -1,8 +1,6 @@
 import pytest
 import os
 from unittest.mock import MagicMock, patch
-from app.routing.query_analyzer import QueryAnalyzer, QueryFeatures
-# Orchestrator imported inside tests to fix patching issues
 
 # Ensure we use deterministic mode for tests
 os.environ["USE_DETERMINISTIC_INFERENCE"] = "true"
@@ -11,50 +9,26 @@ pytestmark = pytest.mark.anyio
 
 class TestRoutingLogic:
     """
-    Tests for the Agentic RAG logic (QueryAnalyzer -> Orchestrator).
+    Tests for routing invariants (Orchestrator).
     Uses hardware-independent mode to avoid needing real GPUs or LLMs.
     """
 
-    @pytest.fixture
-    def mock_analyzer(self):
-        analyzer = QueryAnalyzer()
-        analyzer.judge = MagicMock()
-        return analyzer
-
-    def test_analyzer_detects_code(self, mock_analyzer):
-        """Test that code keywords trigger code domain."""
-        query = "Write a python function to sort a list by name"
-        features = mock_analyzer.extract_features(query)
-        assert "code" in features.domain_markers
-
-    def test_analyzer_detects_realtime(self, mock_analyzer):
-        """Test that 'news' triggers realtime/external strategy."""
-        query = "What is the latest news about AI?"
-        analysis = mock_analyzer.analyze(query)
-        assert analysis["intent"] == "external_search"
-
-    def test_analyzer_detects_complex_reasoning(self, mock_analyzer):
-        """Test that complex questions trigger reasoning."""
-        query = "Analyze the impact of interest rates and explain step-by-step."
-        analysis = mock_analyzer.analyze(query)
-        assert analysis["intent"] == "complex_reasoning"
-
     async def test_orchestrator_routing_rag(self):
-        """Test that Orchestrator correctly calls RAG path."""
+        """Test that Orchestrator correctly calls RAG path for unknown domain."""
         from app.routing.orchestrator import Orchestrator
         from unittest.mock import AsyncMock
         
         # We patch the specific dependencies of the orchestrator
         with patch("app.routing.orchestrator.search_web_context") as mock_search, \
-             patch("app.routing.orchestrator.get_query_analyzer") as mock_get_analyzer, \
+             patch("app.routing.orchestrator.get_semantic_router") as mock_get_router, \
              patch("app.routing.orchestrator.get_reasoner") as mock_get_reasoner, \
              patch("app.routing.orchestrator.get_data_collector") as mock_get_collector, \
              patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
             
-            # Setup analyzer mock
-            mock_analyzer_instance = MagicMock()
-            mock_analyzer_instance.analyze.return_value = {"intent": "external_search"}
-            mock_get_analyzer.return_value = mock_analyzer_instance
+            # Setup router mock to return unknown domain
+            mock_router = MagicMock()
+            mock_router.classify.return_value = ("unknown", 0.2)
+            mock_get_router.return_value = mock_router
             
             # Setup search mock
             mock_search.return_value = ("Mock Context", [{"title": "Test Source", "url": "http://test.com"}])
@@ -86,15 +60,15 @@ class TestRoutingLogic:
         from app.routing.orchestrator import Orchestrator
         from unittest.mock import AsyncMock
         with patch("app.routing.orchestrator.search_web_context") as mock_search, \
-             patch("app.routing.orchestrator.get_query_analyzer") as mock_get_analyzer, \
+             patch("app.routing.orchestrator.get_semantic_router") as mock_get_router, \
              patch("app.routing.orchestrator.get_reasoner") as mock_get_reasoner, \
              patch("app.routing.orchestrator.get_data_collector") as mock_get_collector, \
              patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
             
-            # Setup intent
-            mock_analyzer = MagicMock()
-            mock_analyzer.analyze.return_value = {"intent": "external_search"}
-            mock_get_analyzer.return_value = mock_analyzer
+            # Setup router to return unknown
+            mock_router = MagicMock()
+            mock_router.classify.return_value = ("unknown", 0.2)
+            mock_get_router.return_value = mock_router
             
             # Setup search (tuples)
             mock_search.return_value = ("Context", [])
@@ -121,15 +95,15 @@ class TestRoutingLogic:
         from app.routing.orchestrator import Orchestrator
         from unittest.mock import AsyncMock
         with patch("app.routing.orchestrator.search_web_context") as mock_search, \
-             patch("app.routing.orchestrator.get_query_analyzer") as mock_get_analyzer, \
+             patch("app.routing.orchestrator.get_semantic_router") as mock_get_router, \
              patch("app.routing.orchestrator.get_reasoner") as mock_get_reasoner, \
              patch("app.routing.orchestrator.get_data_collector") as mock_get_collector, \
              patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
             
-            # Setup intent
-            mock_analyzer = MagicMock()
-            mock_analyzer.analyze.return_value = {"intent": "external_search"}
-            mock_get_analyzer.return_value = mock_analyzer
+            # Setup router to return unknown
+            mock_router = MagicMock()
+            mock_router.classify.return_value = ("unknown", 0.2)
+            mock_get_router.return_value = mock_router
             
             # Setup search (Returns NO citations)
             mock_search.return_value = ("Context", [])
