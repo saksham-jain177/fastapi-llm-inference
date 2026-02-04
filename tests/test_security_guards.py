@@ -44,13 +44,13 @@ class TestSecurityGuards:
         
         # Ensure TAVILY_API_KEY is not set
         with patch.dict(os.environ, {"TAVILY_API_KEY": ""}, clear=False), \
-             patch("app.routing.orchestrator.get_query_analyzer") as mock_analyzer, \
+             patch("app.routing.orchestrator.get_semantic_router") as mock_router, \
              patch("app.routing.orchestrator.get_reasoner") as mock_reasoner:
             
-            # Force external_search intent
-            mock_analyzer_instance = MagicMock()
-            mock_analyzer_instance.analyze.return_value = {"intent": "external_search"}
-            mock_analyzer.return_value = mock_analyzer_instance
+            # Force unknown domain to trigger RAG path
+            mock_router_instance = MagicMock()
+            mock_router_instance.classify.return_value = ("unknown", 0.2)
+            mock_router.return_value = mock_router_instance
             mock_reasoner.return_value = MagicMock()
             
             orch = Orchestrator()
@@ -95,14 +95,14 @@ class TestSecurityGuards:
             raise asyncio.TimeoutError()
             
         with patch("app.routing.orchestrator.asyncio.wait_for", side_effect=mock_wait_for), \
-             patch("app.routing.orchestrator.get_query_analyzer") as mock_analyzer, \
+             patch("app.routing.orchestrator.get_semantic_router") as mock_router, \
              patch("app.routing.orchestrator.search_web_context") as mock_search, \
              patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
              
-             # Force intent
-             mock_an = MagicMock()
-             mock_an.analyze.return_value = {"intent": "external_search"}
-             mock_analyzer.return_value = mock_an
+             # Force unknown domain to trigger RAG path
+             mock_router_instance = MagicMock()
+             mock_router_instance.classify.return_value = ("unknown", 0.2)
+             mock_router.return_value = mock_router_instance
              
              orch = Orchestrator()
              result = await orch.route_and_execute("Timeout query")
