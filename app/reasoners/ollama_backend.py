@@ -37,10 +37,10 @@ Context:
 Question: {query}
 
 Instructions:
-1. Group your findings into logical claims.
-2. For every claim, cite the relevant [Source X] marker immediately after the claim.
+1. Provide a direct, factual answer using the provided context.
+2. Do not mention sources, citations, or references (e.g., do not use [Source 1] markers).
 3. Ensure every sentence is semantically complete. Do not cut off mid-thought.
-4. If you have a lot of information, prioritize the most relevant points and finish with a strong summary sentence if you are near the length limit.
+4. If you have a lot of information, prioritize the most relevant points.
 5. End your response with a clear concluding punctuation mark."""
 
     def __init__(self):
