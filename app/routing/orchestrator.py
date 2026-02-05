@@ -12,13 +12,11 @@ import asyncio
 import time
 from app.rag.data_collector import get_data_collector
 from app.routing.semantic_router import get_semantic_router
-from app.rag.feedback_retriever import get_feedback_retriever
-from app.metrics.prometheus import memory_hit_total
+from app.rag.context_manager import get_context_packer
 
 
 class Orchestrator:
     def __init__(self):
-        # self.analyzer = get_query_analyzer() # REMOVED: Heuristic-based analysis
         self.reasoner = get_reasoner()  # Factory-provided, interface-only
         self.adapter_mgr = get_adapter_manager()
 
@@ -236,9 +234,21 @@ class Orchestrator:
             response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
         else:
             try:
-                # Sync call for IO
-                context, citations = search_web_context(query)
-                final_response = await self.reasoner.synthesize_with_context(query, context)
+                # 1. Search (Fetches more base results now)
+                # Note: search_web_context is currently sync, so wait_for won't interrupt it 
+                # unless we run it in a thread, but for now we wrap the whole block.
+                status, raw_results = search_web_context(query)
+                
+                # 2. Rank and Pack
+                packer = get_context_packer()
+                context, citations = packer.pack(query, raw_results)
+                
+                # 3. Synthesize (Async)
+                # Wrap in timeout for robustness
+                final_response = await asyncio.wait_for(
+                    self.reasoner.synthesize_with_context(query, context),
+                    timeout=30.0
+                )
                 
                 if self._is_incomplete(final_response):
                     final_response += "\n\n(This answer may be incomplete. You can ask a follow-up.)"
@@ -254,9 +264,13 @@ class Orchestrator:
                     "citations": citations
                 })
                 log_intent = "rag-external"
+            except asyncio.TimeoutError:
+                print(f"RAG timed out for query: {query}")
+                final_response = "External search or synthesis timed out. Please try a simpler query."
+                response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
             except Exception as e:
                 print(f"RAG failed: {e}")
-                final_response = "External search failed or timed out."
+                final_response = "External search failed."
                 response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
         
         return final_response, context, citations, log_intent

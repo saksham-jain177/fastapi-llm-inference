@@ -5,40 +5,60 @@ Wraps the Tavily client.
 """
 
 import os
+import re
 from app.rag.tavily_client import get_tavily_client
 
 from typing import Tuple, List, Dict
 
-def search_web_context(query: str, max_results: int = 3) -> Tuple[str, List[Dict]]:
+def compute_lexical_relevance(query: str, content: str) -> float:
+    """
+    Compute a lexical relevance score (0-1) based on keyword overlap.
+    No ML, no embeddings. Purely deterministic.
+    """
+    if not content or not query:
+        return 0.0
+        
+    # Clean and tokenize
+    def tokenize(text: str) -> set:
+        clean = re.sub(r'[^\w\s]', '', text.lower())
+        return set(clean.split())
+
+    query_tokens = tokenize(query)
+    content_tokens = tokenize(content)
+    
+    if not query_tokens:
+        return 0.0
+        
+    # Intersection ratio
+    overlap = query_tokens.intersection(content_tokens)
+    score = len(overlap) / len(query_tokens)
+    
+    # Penalize low-diversity "boilerplate" (ratio of unique tokens to total words)
+    words = content.lower().split()
+    if len(words) > 50:
+        diversity = len(set(words)) / len(words)
+        if diversity < 0.3:  # high repetition/boilerplate
+            score *= 0.5
+            
+    return min(score, 1.0)
+
+def search_web_context(query: str, max_results: int = 5) -> Tuple[str, List[Dict]]:
     """
     Search the web for context using Tavily.
-    
-    Args:
-        query: User query
-        max_results: Number of results to fetch
-        
-    Returns:
-        Tuple[context_str, results_list]
+    Now fetches more results (default 5) for re-ranking.
     """
     if not os.getenv("TAVILY_API_KEY"):
         return "Error: TAVILY_API_KEY not configured. Cannot fetch external context.", []
         
     try:
         tavily = get_tavily_client()
-        # Get raw results to preserve metadata
+        # Fetch more for re-ranking
         results = tavily.search(query, max_results=max_results, max_retries=3)
         
         if not results:
             return "No relevant information found.", []
             
-        # Format context string (replicating get_context logic)
-        context_parts = []
-        for i, result in enumerate(results, 1):
-            context_parts.append(
-                f"Source {i}: {result['title']}\n{result['content']}\nURL: {result['url']}"
-            )
-        
-        return "\n\n".join(context_parts), results
+        return "Search completed.", results
         
     except Exception as e:
         print(f"Retrieval error: {e}")
