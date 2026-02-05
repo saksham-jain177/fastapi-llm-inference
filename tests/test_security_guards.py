@@ -99,6 +99,8 @@ class TestSecurityGuards:
              patch("app.routing.orchestrator.search_web_context") as mock_search, \
              patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
              
+             mock_search.return_value = ("Search completed.", [{"title": "Test", "content": "Context", "url": "url"}])
+             
              # Force unknown domain to trigger RAG path
              mock_router_instance = MagicMock()
              mock_router_instance.classify.return_value = ("unknown", 0.2)

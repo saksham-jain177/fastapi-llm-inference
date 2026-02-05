@@ -55,17 +55,6 @@ cache_misses = Counter(
     ['cache_type']
 )
 
-# Memory Hit/Miss Metrics
-memory_hit_total = Counter(
-    'memory_hit_total',
-    'Total number of successful retrieval hits from semantic memory'
-)
-
-memory_miss_total = Counter(
-    'memory_miss_total',
-    'Total number of failed retrieval queries to semantic memory'
-)
-
 # Infrastructure Metrics
 redis_cache_hit_total = Counter(
     'redis_cache_hit_total',
@@ -87,12 +76,6 @@ mongodb_write_total = Counter(
     'Total number of MongoDB write operations'
 )
 
-
-memory_short_circuit_confidence_avg = Histogram(
-    'memory_short_circuit_confidence_avg',
-    'Confidence scores of memory short-circuit hits (avg derived)',
-    buckets=[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0]
-)
 
 # Epistemic Gating Metrics
 gate_decision_total = Counter(

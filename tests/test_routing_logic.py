@@ -31,7 +31,7 @@ class TestRoutingLogic:
             mock_get_router.return_value = mock_router
             
             # Setup search mock
-            mock_search.return_value = ("Mock Context", [{"title": "Test Source", "url": "http://test.com"}])
+            mock_search.return_value = ("Search completed.", [{"title": "Test Source", "content": "Mock Context", "url": "http://test.com"}])
             
             # Setup reasoner mock
             mock_reasoner_instance = AsyncMock()
@@ -50,7 +50,10 @@ class TestRoutingLogic:
             # Verify
             assert result["mode"] == "rag-external"
             assert result["response"] == "RAG Response."
-            assert result["citations"] == [{"title": "Test Source", "url": "http://test.com"}]
+            # Citations include content now as they are passed through from packer
+            assert result["citations"][0]["title"] == "Test Source"
+            assert result["citations"][0]["url"] == "http://test.com"
+            assert result["citations"][0]["content"] == "Mock Context"
             mock_search.assert_called_once_with("What is the weather?")
             mock_reasoner_instance.synthesize_with_context.assert_called_once()
             mock_collector.log_interaction.assert_called_once()
@@ -106,7 +109,7 @@ class TestRoutingLogic:
             mock_get_router.return_value = mock_router
             
             # Setup search (Returns NO citations)
-            mock_search.return_value = ("Context", [])
+            mock_search.return_value = ("Search completed.", [])
             
             # Setup reasoner to hallucinates sources
             mock_reasoner = AsyncMock()
@@ -151,7 +154,7 @@ class TestRoutingLogic:
             mock_get_collector.return_value = mock_collector
             
             # 3. Setup RAG Search & Reasoner
-            mock_search.return_value = ("PageIndex is a C# concept", ["Source 1"])
+            mock_search.return_value = ("Search completed.", [{"title": "Source 1", "content": "PageIndex is a C# concept", "url": "http://test.com"}])
             mock_reasoner = AsyncMock()
             mock_reasoner.synthesize_with_context.return_value = "PageIndex is found in pagination."
             mock_get_reasoner.return_value = mock_reasoner
