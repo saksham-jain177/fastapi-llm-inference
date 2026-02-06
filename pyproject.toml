@@ -27,6 +27,7 @@ dependencies = [
     "bitsandbytes",
     "motor>=3.3.0",
     "dnspython",
+    "duckduckgo-search>=4.0.0",
 ]
 
 [project.optional-dependencies]

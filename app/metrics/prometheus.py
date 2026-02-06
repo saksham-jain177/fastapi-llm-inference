@@ -117,8 +117,19 @@ inference_latency = Histogram(
 # Confidence scores
 classification_confidence = Histogram(
     'llm_classification_confidence',
-    'Classification confidence scores',
-    buckets=[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0]
+    'Confidence scores of memory short-circuit hits (avg derived)',
+    buckets=[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0]
+)
+
+# RAG Fallback Metrics
+rag_tavily_fallback_total = Counter(
+    "rag_tavily_fallback_total",
+    "Total times Tavily failed and fallback was attempted"
+)
+
+rag_duckduckgo_used_total = Counter(
+    "rag_duckduckgo_used_total",
+    "Total times DuckDuckGo was successfully used as fallback"
 )
 
 
