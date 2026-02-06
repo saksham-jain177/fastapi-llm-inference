@@ -229,10 +229,12 @@ class Orchestrator:
         log_intent = "external_search"
         final_response = ""
 
-        if not os.getenv("TAVILY_API_KEY"):
-            final_response = "I cannot search for external information at this time. This capability is currently unavailable."
-            response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
-        else:
+        # Strict API check removed to allow DuckDuckGo fallback
+        # if not os.getenv("TAVILY_API_KEY"):
+        #     final_response = "I cannot search for external information at this time. This capability is currently unavailable."
+        #     response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
+        # else:
+        if True: # Always attempt search, retrieval.py handles missing keys via fallback
             try:
                 # 1. Search (Fetches more base results now)
                 # Note: search_web_context is currently sync, so wait_for won't interrupt it 

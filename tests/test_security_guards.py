@@ -38,26 +38,42 @@ class TestSecurityGuards:
         assert data["source"] == "refused"
         assert "exceeds" in data["answer"].lower() or "length" in data["answer"].lower()
     
-    async def test_rag_refused_without_tavily_key(self):
-        """Verify RAG path refuses cleanly when TAVILY_API_KEY is missing."""
+    async def test_rag_fallback_without_tavily_key(self):
+        """Verify RAG path attempts fallback when TAVILY_API_KEY is missing."""
         from app.routing.orchestrator import Orchestrator
         
         # Ensure TAVILY_API_KEY is not set
         with patch.dict(os.environ, {"TAVILY_API_KEY": ""}, clear=False), \
              patch("app.routing.orchestrator.get_semantic_router") as mock_router, \
-             patch("app.routing.orchestrator.get_reasoner") as mock_reasoner:
+             patch("app.routing.orchestrator.get_reasoner") as mock_reasoner, \
+             patch("app.routing.orchestrator.search_web_context") as mock_search, \
+             patch("app.routing.orchestrator.get_context_packer") as mock_packer:
             
             # Force unknown domain to trigger RAG path
             mock_router_instance = MagicMock()
             mock_router_instance.classify.return_value = ("unknown", 0.2)
             mock_router.return_value = mock_router_instance
-            mock_reasoner.return_value = MagicMock()
+            
+            # Search returns success (simulating fallback success happening inside retrieval)
+            # note: in real run retrieval.py does the fallback logic, here we mock the result of search_web_context
+            mock_search.return_value = ("Fallback successful.", [{"title": "DDG", "content": "Fallback Content", "url": "ddg.com"}])
+            
+            # Mock packer
+            mock_packer_instance = MagicMock()
+            mock_packer_instance.pack.return_value = ("Packed context", [{"title": "DDG", "content": "Fallback Content"}])
+            mock_packer.return_value = mock_packer_instance
+            
+            # Mock reasoner
+            mock_reasoner_instance = AsyncMock()
+            mock_reasoner_instance.synthesize_with_context.return_value = "Answer from fallback."
+            mock_reasoner.return_value = mock_reasoner_instance
             
             orch = Orchestrator()
             result = await orch.route_and_execute("What is the latest news?")
             
-            assert result["source"] == "refused"
-            assert "unavailable" in result["response"].lower()
+            # Should NOT be refused
+            assert result["mode"] == "rag-external"
+            assert result["response"] == "Answer from fallback."
 
     def test_infer_hard_limit(self, client):
         """Verify strict 413 limit on /infer endpoint."""

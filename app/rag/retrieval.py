@@ -47,19 +47,37 @@ def search_web_context(query: str, max_results: int = 5) -> Tuple[str, List[Dict
     Search the web for context using Tavily.
     Now fetches more results (default 5) for re-ranking.
     """
-    if not os.getenv("TAVILY_API_KEY"):
-        return "Error: TAVILY_API_KEY not configured. Cannot fetch external context.", []
-        
+    # --- PRIMARY: Tavily ---
     try:
-        tavily = get_tavily_client()
-        # Fetch more for re-ranking
-        results = tavily.search(query, max_results=max_results, max_retries=3)
-        
-        if not results:
-            return "No relevant information found.", []
+        if os.getenv("TAVILY_API_KEY"):
+            tavily = get_tavily_client()
+            # Fetch more for re-ranking
+            results = tavily.search(query, max_results=max_results, max_retries=3)
             
-        return "Search completed.", results
-        
+            if results:
+                return "Search completed.", results
+        else:
+            print("Tavily API key missing, attempting fallback...")
+            
     except Exception as e:
-        print(f"Retrieval error: {e}")
-        return f"Error retrieving context: {str(e)}", []
+        print(f"Tavily retrieval error: {e}")
+        # Fallback continues below
+        
+    # --- FALLBACK: DuckDuckGo ---
+    from app.metrics.prometheus import rag_tavily_fallback_total, rag_duckduckgo_used_total
+    rag_tavily_fallback_total.inc()
+    
+    print("Falling back to DuckDuckGo...")
+    try:
+        from app.rag.duckduckgo_client import get_ddg_client
+        ddg = get_ddg_client()
+        results = ddg.search(query, max_results=max_results)
+        
+        if results:
+            rag_duckduckgo_used_total.inc()
+            return "Search completed (Fallback).", results
+            
+    except Exception as e:
+        print(f"DDG fallback error: {e}")
+        
+    return "No relevant information found.", []
