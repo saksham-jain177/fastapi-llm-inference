@@ -229,51 +229,45 @@ class Orchestrator:
         log_intent = "external_search"
         final_response = ""
 
-        # Strict API check removed to allow DuckDuckGo fallback
-        # if not os.getenv("TAVILY_API_KEY"):
-        #     final_response = "I cannot search for external information at this time. This capability is currently unavailable."
-        #     response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
-        # else:
-        if True: # Always attempt search, retrieval.py handles missing keys via fallback
-            try:
-                # 1. Search (Fetches more base results now)
-                # Note: search_web_context is currently sync, so wait_for won't interrupt it 
-                # unless we run it in a thread, but for now we wrap the whole block.
-                status, raw_results = search_web_context(query)
-                
-                # 2. Rank and Pack
-                packer = get_context_packer()
-                context, citations = packer.pack(query, raw_results)
-                
-                # 3. Synthesize (Async)
-                # Wrap in timeout for robustness
-                final_response = await asyncio.wait_for(
-                    self.reasoner.synthesize_with_context(query, context),
-                    timeout=30.0
-                )
-                
-                if self._is_incomplete(final_response):
-                    final_response += "\n\n(This answer may be incomplete. You can ask a follow-up.)"
-                final_response = self._clean_citations(final_response, citations)
-                
-                await collector.cache_response(query, final_response)
-                response_data.update({
-                    "mode": "rag-external",
-                    "response": final_response,
-                    "context_used": True,
-                    "confidence": 1.0,
-                    "source": "rag",
-                    "citations": citations
-                })
-                log_intent = "rag-external"
-            except asyncio.TimeoutError:
-                print(f"RAG timed out for query: {query}")
-                final_response = "External search or synthesis timed out. Please try a simpler query."
-                response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
-            except Exception as e:
-                print(f"RAG failed: {e}")
-                final_response = "External search failed."
-                response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
+        try:
+            # 1. Search (Fetches more base results now)
+            # Note: search_web_context is currently sync, so wait_for won't interrupt it 
+            # unless we run it in a thread, but for now we wrap the whole block.
+            status, raw_results = search_web_context(query)
+            
+            # 2. Rank and Pack
+            packer = get_context_packer()
+            context, citations = packer.pack(query, raw_results)
+            
+            # 3. Synthesize (Async)
+            # Wrap in timeout for robustness
+            final_response = await asyncio.wait_for(
+                self.reasoner.synthesize_with_context(query, context),
+                timeout=30.0
+            )
+            
+            if self._is_incomplete(final_response):
+                final_response += "\n\n(This answer may be incomplete. You can ask a follow-up.)"
+            final_response = self._clean_citations(final_response, citations)
+            
+            await collector.cache_response(query, final_response)
+            response_data.update({
+                "mode": "rag-external",
+                "response": final_response,
+                "context_used": True,
+                "confidence": 1.0,
+                "source": "rag",
+                "citations": citations
+            })
+            log_intent = "rag-external"
+        except asyncio.TimeoutError:
+            print(f"RAG timed out for query: {query}")
+            final_response = "External search or synthesis timed out. Please try a simpler query."
+            response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
+        except Exception as e:
+            print(f"RAG failed: {e}")
+            final_response = "External search failed."
+            response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
         
         return final_response, context, citations, log_intent
 
