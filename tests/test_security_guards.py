@@ -28,7 +28,8 @@ class TestSecurityGuards:
     def test_oversized_prompt_refused(self, client):
         """Verify oversized prompts are rejected with refusal response."""
         # Generate prompt exceeding MAX_PROMPT_LENGTH (8192 default)
-        oversized_prompt = "x" * 10000
+        # Use a high-information string that is also oversized
+        oversized_prompt = "What are the specific technical architectural requirements for indexing a multi-terabyte database with high availability? " * 100
         
         response = client.post("/infer-adaptive", json={"prompt": oversized_prompt})
         
@@ -123,7 +124,7 @@ class TestSecurityGuards:
              mock_router.return_value = mock_router_instance
              
              orch = Orchestrator()
-             result = await orch.route_and_execute("Timeout query")
+             result = await orch.route_and_execute("Will this specific RAG query timeout eventually?")
              
              assert result["refused"] is True
              assert "timed out" in result["response"]

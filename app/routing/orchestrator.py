@@ -13,6 +13,7 @@ import time
 from app.rag.data_collector import get_data_collector
 from app.routing.semantic_router import get_semantic_router
 from app.rag.context_manager import get_context_packer
+from app.routing.information_gate import is_informative
 
 
 class Orchestrator:
@@ -62,12 +63,40 @@ class Orchestrator:
         Execute full request pipeline using Truth-First Inference.
         
         Path:
+        0. Information Density Check (Early refusal)
         1. Semantic Classification (Domain)
         2. Adapter Check (Specialized Knowledge)
         3. Knowledge Gate (General Knowledge)
            -> RAG (if unknown/uncertain) 
            -> Model (only if strictly confident)
         """
+        # 0. Information Density Check
+        if not is_informative(query):
+            print(f"  🛑 Low information query refused: '{query}'")
+            refusal_response = "Please provide a more specific, information-seeking question."
+            
+            response_data = {
+                "prompt_received": query,
+                "timestamp": time.time(),
+                "refused": True,
+                "confidence": 0.0,
+                "source": "refused",
+                "response": refusal_response,
+                "mode": "refused"
+            }
+            
+            # Log refusal
+            collector = get_data_collector()
+            await collector.log_interaction(
+                query=query,
+                context="none",
+                response=refusal_response,
+                intent="refused",
+                confidence=0.0,
+                source="refused"
+            )
+            return response_data
+
         # 1. Semantic Classification
         router = get_semantic_router()
         domain, semantic_conf = router.classify(query)

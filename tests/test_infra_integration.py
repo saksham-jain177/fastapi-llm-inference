@@ -25,7 +25,7 @@ async def test_redis_hit_short_circuits_rag():
 
                 # Execute
                 orch = Orchestrator()
-                result = await orch.route_and_execute("Cached query")
+                result = await orch.route_and_execute("How to use Redis cache?")
                 
                 # Verify Redis hit
                 assert result["mode"] == "redis_cache"
