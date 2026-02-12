@@ -16,47 +16,12 @@ from app.rag.context_manager import get_context_packer
 from app.routing.information_gate import is_informative
 
 
+from app.routing.response_utils import is_incomplete, clean_citations
+
 class Orchestrator:
     def __init__(self):
         self.reasoner = get_reasoner()  # Factory-provided, interface-only
         self.adapter_mgr = get_adapter_manager()
-
-    def _is_incomplete(self, text: str) -> bool:
-        """
-        Detects if the response seems truncated based on terminal punctuation.
-        """
-        if not text:
-            return False
-            
-        text = text.strip()
-        
-        # Check for valid terminal punctuation
-        valid_endings = ('.', '!', '?', '"', "'", '`', '}')
-        if text.endswith(valid_endings):
-            return False
-            
-        # Check for trailing stop words that suggest interruption
-        trailing_indicators = ('and', 'or', 'but', 'the', 'a', 'an', 'with', 'to', 'of', 'in', 'on', 'at', 'by', 'for', 'which', 'that')
-        if text.lower().endswith(trailing_indicators):
-            return True
-            
-        # If it doesn't end with valid punctuation, assume incomplete
-        return True
-
-    def _clean_citations(self, text: str, citations: list) -> str:
-        """
-        Enforce citation integrity:
-        1. If no citations exist, remove [Source X] markers (hallucinations).
-        2. If citations exist but text has no markers, that's fine (frontend handles it).
-        """
-        import re
-        
-        # Case 1: No valid citations -> Strip all markers
-        if not citations:
-            # Matches [Source 1], [Source 10], etc.
-            return re.sub(r'\[Source \d+\]', '', text).strip()
-            
-        return text
 
     async def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
         """
@@ -275,9 +240,9 @@ class Orchestrator:
                 timeout=30.0
             )
             
-            if self._is_incomplete(final_response):
+            if is_incomplete(final_response):
                 final_response += "\n\n(This answer may be incomplete. You can ask a follow-up.)"
-            final_response = self._clean_citations(final_response, citations)
+            final_response = clean_citations(final_response, citations)
             
             await collector.cache_response(query, final_response)
             response_data.update({

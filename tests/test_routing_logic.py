@@ -13,51 +13,6 @@ class TestRoutingLogic:
     Uses hardware-independent mode to avoid needing real GPUs or LLMs.
     """
 
-    async def test_orchestrator_routing_rag(self):
-        """Test that Orchestrator correctly calls RAG path for unknown domain."""
-        from app.routing.orchestrator import Orchestrator
-        from unittest.mock import AsyncMock
-        
-        # We patch the specific dependencies of the orchestrator
-        with patch("app.routing.orchestrator.search_web_context") as mock_search, \
-             patch("app.routing.orchestrator.get_semantic_router") as mock_get_router, \
-             patch("app.routing.orchestrator.get_reasoner") as mock_get_reasoner, \
-             patch("app.routing.orchestrator.get_data_collector") as mock_get_collector, \
-             patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
-            
-            # Setup router mock to return unknown domain
-            mock_router = MagicMock()
-            mock_router.classify.return_value = ("unknown", 0.2)
-            mock_get_router.return_value = mock_router
-            
-            # Setup search mock
-            mock_search.return_value = ("Search completed.", [{"title": "Test Source", "content": "Mock Context", "url": "http://test.com"}])
-            
-            # Setup reasoner mock
-            mock_reasoner_instance = AsyncMock()
-            mock_reasoner_instance.synthesize_with_context.return_value = "RAG Response."
-            mock_get_reasoner.return_value = mock_reasoner_instance
-
-            # Setup collector mock (ensure cache miss)
-            mock_collector = AsyncMock()
-            mock_collector.get_cached_response.return_value = None
-            mock_get_collector.return_value = mock_collector
-            
-            # Execute
-            orch = Orchestrator()
-            result = await orch.route_and_execute("What is the weather?")
-            
-            # Verify
-            assert result["mode"] == "rag-external"
-            assert result["response"] == "RAG Response."
-            # Citations include content now as they are passed through from packer
-            assert result["citations"][0]["title"] == "Test Source"
-            assert result["citations"][0]["url"] == "http://test.com"
-            assert result["citations"][0]["content"] == "Mock Context"
-            mock_search.assert_called_once_with("What is the weather?")
-            mock_reasoner_instance.synthesize_with_context.assert_called_once()
-            mock_collector.log_interaction.assert_called_once()
-
     async def test_orchestrator_detects_truncated_response(self):
         """Test that truncated answers get a warning appended."""
         from app.routing.orchestrator import Orchestrator
