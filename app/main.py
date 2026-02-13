@@ -344,7 +344,7 @@ async def infer_adaptive(request: InferenceRequest, req: Request):
         orchestrator = get_orchestrator()
         
         # Await async routing
-        result = await orchestrator.route_and_execute(request.prompt)
+        result = await orchestrator.route_and_execute(request.prompt, headers=dict(req.headers))
         
         # Map to contract
         response = InferenceResponse(

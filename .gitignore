@@ -13,6 +13,8 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+load_test_results*.csv
+data/telemetry_audit.jsonl
 
 # IDE
 .vscode/
