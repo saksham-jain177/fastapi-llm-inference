@@ -18,12 +18,14 @@ from app.routing.information_gate import is_informative
 
 from app.routing.response_utils import is_incomplete, clean_citations
 
+from app.observability.telemetry import get_telemetry_logger
+
 class Orchestrator:
     def __init__(self):
         self.reasoner = get_reasoner()  # Factory-provided, interface-only
         self.adapter_mgr = get_adapter_manager()
 
-    async def route_and_execute(self, query: str, feedback_intent: str = None) -> dict:
+    async def route_and_execute(self, query: str, feedback_intent: str = None, headers: dict = None) -> dict:
         """
         Execute full request pipeline using Truth-First Inference.
         
@@ -35,6 +37,15 @@ class Orchestrator:
            -> RAG (if unknown/uncertain) 
            -> Model (only if strictly confident)
         """
+        # Telemetry: Load Test Audit
+        if headers and headers.get("x-load-test"):
+            telemetry = get_telemetry_logger()
+            await telemetry.log_event("load_test_request", {
+                "query": query,
+                "timestamp": time.time(),
+                "headers": headers
+            })
+
         # 0. Information Density Check
         if not is_informative(query):
             print(f"  🛑 Low information query refused: '{query}'")
