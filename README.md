@@ -51,10 +51,6 @@ This ensures reproducibility, hardware independence, and deploy safety.
 Model quality and retrieval effectiveness are evaluated offline
 and through runtime monitoring, not in CI.
 
-```bash
-USE_DETERMINISTIC_INFERENCE=true USE_MOCKED_MODELS=true pytest tests/ -v
-```
-
 ## Architecture
 
 The system follows an **Interface → Factory → Backend** pattern to ensure hardware independence and CI stability.
