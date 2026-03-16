@@ -1,7 +1,7 @@
 import json
 import os
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 
@@ -22,7 +22,7 @@ class TelemetryLogger:
         Uses sync append in executor to avoid blocking the event loop.
         """
         entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "type": event_type,
             **data
         }
@@ -40,12 +40,16 @@ class TelemetryLogger:
             f.write(line)
 
 
-# Global instance
+# Global instance and lock
+import threading
+_telemetry_lock = threading.Lock()
 _telemetry = None
 
 
 def get_telemetry_logger() -> TelemetryLogger:
     global _telemetry
     if _telemetry is None:
-        _telemetry = TelemetryLogger()
+        with _telemetry_lock:
+            if _telemetry is None:
+                _telemetry = TelemetryLogger()
     return _telemetry

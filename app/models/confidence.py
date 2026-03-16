@@ -106,12 +106,16 @@ class ConfidenceEstimator:
         return low_temp_samples[0], final_confidence
 
 
-# Singleton instance
+# Singleton instance and lock
+import threading
+_estimator_lock = threading.Lock()
 _estimator_instance = None
 
 def get_confidence_estimator() -> ConfidenceEstimator:
     """Get singleton confidence estimator."""
     global _estimator_instance
     if _estimator_instance is None:
-        _estimator_instance = ConfidenceEstimator()
+        with _estimator_lock:
+            if _estimator_instance is None:
+                _estimator_instance = ConfidenceEstimator()
     return _estimator_instance

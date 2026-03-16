@@ -158,7 +158,9 @@ class SemanticRouter:
         return sorted_domains[:top_k]
 
 
-# Global instance
+# Global instance and lock
+import threading
+_semantic_router_lock = threading.Lock()
 _semantic_router = None
 
 
@@ -166,10 +168,13 @@ def get_semantic_router() -> SemanticRouter:
     """Get or create semantic router instance."""
     global _semantic_router
     if _semantic_router is None:
-        _semantic_router = SemanticRouter()
+        with _semantic_router_lock:
+            if _semantic_router is None:
+                _semantic_router = SemanticRouter()
     return _semantic_router
 
 def reset_semantic_router():
     """Reset the singleton instance."""
     global _semantic_router
-    _semantic_router = None
+    with _semantic_router_lock:
+        _semantic_router = None

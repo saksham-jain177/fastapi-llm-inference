@@ -10,6 +10,8 @@ from app.rag.tavily_client import get_tavily_client
 
 from typing import Tuple, List, Dict
 
+import asyncio
+
 def compute_lexical_relevance(query: str, content: str) -> float:
     """
     Compute a lexical relevance score (0-1) based on keyword overlap.
@@ -42,7 +44,7 @@ def compute_lexical_relevance(query: str, content: str) -> float:
             
     return min(score, 1.0)
 
-def search_web_context(query: str, max_results: int = 5) -> Tuple[str, List[Dict]]:
+async def search_web_context(query: str, max_results: int = 5) -> Tuple[str, List[Dict]]:
     """
     Search the web for context using Tavily.
     Now fetches more results (default 5) for re-ranking.
@@ -52,7 +54,7 @@ def search_web_context(query: str, max_results: int = 5) -> Tuple[str, List[Dict
         if os.getenv("TAVILY_API_KEY"):
             tavily = get_tavily_client()
             # Fetch more for re-ranking
-            results = tavily.search(query, max_results=max_results, max_retries=3)
+            results = await tavily.search(query, max_results=max_results, max_retries=3)
             
             if results:
                 return "Search completed.", results
@@ -71,7 +73,8 @@ def search_web_context(query: str, max_results: int = 5) -> Tuple[str, List[Dict
     try:
         from app.rag.duckduckgo_client import get_ddg_client
         ddg = get_ddg_client()
-        results = ddg.search(query, max_results=max_results)
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(None, lambda: ddg.search(query, max_results=max_results))
         
         if results:
             rag_duckduckgo_used_total.inc()

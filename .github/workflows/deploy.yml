@@ -25,23 +25,62 @@ on:
       - "docker-compose.yml"
 
 jobs:
-  verify-invariants:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install ruff
+      - name: Run Ruff Lint
+        run: ruff check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install .
+          pip install .[dev] mypy
+      - name: Run Mypy
+        run: mypy app/ --ignore-missing-imports
+
+  test:
     runs-on: ubuntu-latest
     env:
       USE_DETERMINISTIC_INFERENCE: "true"
       USE_MOCKED_MODELS: "true"
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install dependencies
         run: |
           pip install .
-          pip install .[dev]
+          pip install .[dev] pytest-cov
+      - name: Run invariant tests with coverage
+        run: python -m pytest tests/ -v --cov=app --cov-report=xml
 
-      - name: Run invariant tests
-        run: python -m pytest tests/ -v
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm ci
+      - name: Run ESLint
+        run: npm run lint
+      - name: Build
+        run: npm run build

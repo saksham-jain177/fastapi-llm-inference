@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -70,7 +70,7 @@ class DataCollector:
         elif confidence >= 0.6: conf_bucket = "medium"
 
         entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "query": query,
             "context": context,
             "response": response,
@@ -197,7 +197,7 @@ class DataCollector:
         if self.redis_client:
             try:
                 import hashlib
-                query_hash = hashlib.md5(query.strip().lower().encode()).hexdigest()
+                query_hash = hashlib.sha256(query.strip().lower().encode()).hexdigest()
                 key = f"cache:response:{query_hash}"
                 await self.redis_client.set(key, response, ex=ttl)
             except Exception as e:
@@ -210,7 +210,7 @@ class DataCollector:
                 import hashlib
                 from app.metrics.prometheus import redis_cache_hit_total, redis_cache_miss_total
                 
-                query_hash = hashlib.md5(query.strip().lower().encode()).hexdigest()
+                query_hash = hashlib.sha256(query.strip().lower().encode()).hexdigest()
                 key = f"cache:response:{query_hash}"
                 cached = await self.redis_client.get(key)
                 
@@ -225,11 +225,15 @@ class DataCollector:
                 return None
         return None
 
-# Global instance
+# Global instance and lock
+import threading
+_collector_lock = threading.Lock()
 _collector = None
 
 def get_data_collector() -> DataCollector:
     global _collector
     if _collector is None:
-        _collector = DataCollector()
+        with _collector_lock:
+            if _collector is None:
+                _collector = DataCollector()
     return _collector

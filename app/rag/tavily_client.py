@@ -4,6 +4,7 @@ Tavily RAG client with caching, rate limiting, and error handling.
 
 import os
 import time
+import asyncio
 import hashlib
 from tavily import TavilyClient
 from typing import List, Dict, Optional
@@ -67,7 +68,7 @@ class CachedTavilyRAG:
     def _get_cache_key(self, query: str, max_results: int) -> str:
         """Generate cache key from query parameters."""
         content = f"{query}:{max_results}"
-        return hashlib.md5(content.encode()).hexdigest()
+        return hashlib.sha256(content.encode()).hexdigest()
     
     def _add_to_cache(self, key: str, value: List[Dict]):
         """Add to cache with LRU eviction."""
@@ -77,7 +78,7 @@ class CachedTavilyRAG:
             del self.cache[oldest_key]
         self.cache[key] = value
     
-    def search(self, query: str, max_results: int = 3, max_retries: int = 3) -> List[Dict]:
+    async def search(self, query: str, max_results: int = 3, max_retries: int = 3) -> List[Dict]:
         """
         Search with caching and rate limiting.
         
@@ -102,15 +103,19 @@ class CachedTavilyRAG:
         if not self.rate_limiter.allow_request():
             wait_time = self.rate_limiter.wait_time()
             print(f"Rate limit reached. Waiting {wait_time:.1f}s...")
-            time.sleep(wait_time)
+            await asyncio.sleep(wait_time)
         
         # Retry logic
         for attempt in range(max_retries):
             try:
-                response = self.client.search(
-                    query=query,
-                    search_depth="advanced",
-                    max_results=max_results
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.search(
+                        query=query,
+                        search_depth="advanced",
+                        max_results=max_results
+                    )
                 )
                 
                 results = []
@@ -130,14 +135,14 @@ class CachedTavilyRAG:
                 if attempt < max_retries - 1:
                     backoff = 2 ** attempt
                     print(f"Tavily API error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {backoff}s...")
-                    time.sleep(backoff)
+                    await asyncio.sleep(backoff)
                 else:
                     print(f"Tavily API error after {max_retries} attempts: {e}")
                     return []
     
-    def get_context(self, query: str, max_results: int = 3) -> str:
+    async def get_context(self, query: str, max_results: int = 3) -> str:
         """Get formatted context string from search results."""
-        results = self.search(query, max_results)
+        results = await self.search(query, max_results)
         
         if not results:
             return "No relevant information found."
@@ -164,7 +169,9 @@ class CachedTavilyRAG:
         }
 
 
-# Global instance
+# Global instance and lock
+import threading
+_tavily_client_lock = threading.Lock()
 _tavily_client: Optional[CachedTavilyRAG] = None
 
 
@@ -172,6 +179,8 @@ def get_tavily_client() -> CachedTavilyRAG:
     """Get or create Tavily client instance."""
     global _tavily_client
     if _tavily_client is None:
-        _tavily_client = CachedTavilyRAG()
+        with _tavily_client_lock:
+            if _tavily_client is None:
+                _tavily_client = CachedTavilyRAG()
     return _tavily_client
 

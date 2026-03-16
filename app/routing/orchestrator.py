@@ -236,9 +236,7 @@ class Orchestrator:
 
         try:
             # 1. Search (Fetches more base results now)
-            # Note: search_web_context is currently sync, so wait_for won't interrupt it 
-            # unless we run it in a thread, but for now we wrap the whole block.
-            status, raw_results = search_web_context(query)
+            status, raw_results = await search_web_context(query)
             
             # 2. Rank and Pack
             packer = get_context_packer()
@@ -276,11 +274,15 @@ class Orchestrator:
         
         return final_response, context, citations, log_intent
 
-# Global instance
+# Global instance and lock
+import threading
+_orchestrator_lock = threading.Lock()
 _orchestrator = None
 
 def get_orchestrator() -> Orchestrator:
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = Orchestrator()
+        with _orchestrator_lock:
+            if _orchestrator is None:
+                _orchestrator = Orchestrator()
     return _orchestrator

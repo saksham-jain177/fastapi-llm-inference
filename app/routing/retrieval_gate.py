@@ -3,7 +3,6 @@ Retrieval gate using embedding-based novelty detection.
 No heuristics - purely distance from internal knowledge centroid.
 """
 
-from sentence_transformers import SentenceTransformer
 import numpy as np
 from typing import Optional
 
