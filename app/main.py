@@ -8,10 +8,15 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+import uuid
+from app.observability.logger import get_logger, request_id_cvar
 
 # Load environment variables from .env file (for local development)
 env_path = Path(__file__).parent / '.env'
 load_dotenv(dotenv_path=env_path)
+
+logger = get_logger()
 
 app = FastAPI(
     title="FastAPI LLM Inference",
@@ -21,8 +26,20 @@ app = FastAPI(
     redoc_url=None
 )
 
+class CorrelationIdMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request_id_cvar.set(req_id)
+        # Add to request state for downstream sync functions if needed
+        request.state.request_id = req_id
+        
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
+        return response
+
 # Enable CORS for Frontend
 from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000"],
@@ -375,7 +392,7 @@ async def infer_adaptive(request: InferenceRequest, req: Request):
     
     except Exception as e:
         import traceback
-        traceback.print_exc()
+        logger.error(f"Adaptive routing failed: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Adaptive routing failed: {str(e)}")
 
 
@@ -417,7 +434,7 @@ async def system_stats():
             
         stats["storage_source"] = db_stats["source"]
     except Exception as e:
-        print(f"Stats sync error: {e}")
+        logger.error("Stats sync error", error=str(e))
         
     return stats
 
@@ -503,6 +520,6 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
         
         return {"status": "recorded", "message": "Feedback saved for training"}
     except Exception as e:
-        print(f"Feedback log error: {e}")
+        logger.error("Feedback log error", error=str(e))
         return {"status": "error", "message": str(e)}
 

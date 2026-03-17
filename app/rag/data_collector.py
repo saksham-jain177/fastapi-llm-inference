@@ -3,6 +3,10 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional
+import hashlib
+from app.observability.logger import get_logger
+
+logger = get_logger()
 
 class DataCollector:
     """
@@ -37,9 +41,39 @@ class DataCollector:
             try:
                 import redis.asyncio as redis
                 self.redis_client = redis.from_url(redis_url, decode_responses=True)
-                print("DataCollector: Connected to Redis")
+                logger.info("DataCollector: Connected to Redis")
             except Exception as e:
-                print(f"DataCollector: Failed to connect to Redis. {e}")
+                logger.error("DataCollector: Failed to connect to Redis", error=str(e))
+
+        # Initialize ChromaDB Semantic Cache
+        self.chroma_client = None
+        self.semantic_cache = None
+        try:
+            import chromadb
+            from chromadb.config import Settings
+            
+            # Use persistent Chroma instance in data/chroma
+            chroma_path = project_root / "data" / "chroma"
+            chroma_path.mkdir(parents=True, exist_ok=True)
+            
+            # Check environment to see if we should use mocked/deterministic embedding
+            use_deterministic = os.getenv("USE_DETERMINISTIC_INFERENCE", "false").lower() == "true"
+            
+            self.chroma_client = chromadb.PersistentClient(path=str(chroma_path))
+            
+            # Create or get the cache collection. 
+            # Chroma automatically uses exactly the same all-MiniLM-L6-v2 embedding model 
+            # by default under the hood unless we override it.
+            self.semantic_cache = self.chroma_client.get_or_create_collection(
+                name="rag_semantic_cache",
+                metadata={"hnsw:space": "cosine"}
+            )
+            logger.info("DataCollector: Initialized ChromaDB semantic cache", path=str(chroma_path))
+            
+        except ImportError:
+            logger.warning("DataCollector: chromadb not installed, semantic caching disabled")
+        except Exception as e:
+            logger.error("DataCollector: Failed to initialized ChromaDB semantic cache", error=str(e))
 
     async def log_interaction(self, 
                        query: str, 
@@ -98,14 +132,13 @@ class DataCollector:
                 await self.mongo_collection.insert_one(entry)
                 from app.metrics.prometheus import mongodb_write_total
                 mongodb_write_total.inc()
-                # print(f"✅ MongoDB: Saved feedback to MongoDB")
                 return
             except Exception as e:
                 import traceback
-                print(f"❌ Mongo Log Error: {e}")
+                logger.error("Mongo Log Error", error=str(e))
                 # Guardrail: Fallback to local file logging is gated by ALLOW_LOCAL_FALLBACK to ensure Mongo-first policy by default.
                 if os.getenv("ALLOW_LOCAL_FALLBACK", "false").lower() != "true":
-                     print("Suggest enabling ALLOW_LOCAL_FALLBACK=true if Mongo is unstable.")
+                     logger.warning("Suggest enabling ALLOW_LOCAL_FALLBACK=true if Mongo is unstable.")
                      return
         else:
              if os.getenv("ALLOW_LOCAL_FALLBACK", "false").lower() != "true":
@@ -117,7 +150,7 @@ class DataCollector:
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
         except Exception as e:
-            print(f"Error logging interaction: {e}")
+            logger.error("Error logging interaction", error=str(e))
 
     async def get_stats(self) -> Dict[str, int]:
         """Return count of collected samples."""
@@ -148,7 +181,7 @@ class DataCollector:
                     logs.append(doc)
                 return logs
             except Exception as e:
-                print(f"Error fetching from Mongo: {e}")
+                logger.error("Error fetching from Mongo", error=str(e))
         
         # Fallback to file only if allowed
         if os.getenv("ALLOW_LOCAL_FALLBACK", "false").lower() == "true":
@@ -178,7 +211,7 @@ class DataCollector:
                     interactions.append(doc)
                 return interactions
             except Exception as e:
-                print(f"Error fetching from Mongo: {e}")
+                logger.error("Error fetching from Mongo", error=str(e))
         
         # Fallback to file only if allowed
         if os.getenv("ALLOW_LOCAL_FALLBACK", "false").lower() == "true":
@@ -193,21 +226,69 @@ class DataCollector:
         return interactions
 
     async def cache_response(self, query: str, response: str, ttl: int = 300):
-        """Cache high-confidence response in Redis."""
+        """Cache high-confidence response in Semantic Cache (ChromaDB) and exact-match Redis cache."""
+        # 1. Exact Match via Redis (Legacy/Fast fallback)
         if self.redis_client:
             try:
-                import hashlib
                 query_hash = hashlib.sha256(query.strip().lower().encode()).hexdigest()
                 key = f"cache:response:{query_hash}"
                 await self.redis_client.set(key, response, ex=ttl)
             except Exception as e:
-                print(f"Redis cache set failed: {e}")
+                logger.error("Redis cache set failed", error=str(e))
+                
+        # 2. Semantic Match via ChromaDB
+        if self.semantic_cache:
+            try:
+                doc_id = hashlib.sha256(query.strip().lower().encode()).hexdigest()
+                
+                # We offload Chroma calls to a thread since it does disk I/O / sync ops
+                import asyncio
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: self.semantic_cache.upsert(
+                        ids=[doc_id],
+                        documents=[query],
+                        metadatas=[{"response": response, "created_at": datetime.now(timezone.utc).isoformat()}]
+                    )
+                )
+            except Exception as e:
+                logger.error("ChromaDB semantic cache set failed", error=str(e))
 
     async def get_cached_response(self, query: str) -> Optional[str]:
-        """Retrieve response from Redis cache."""
+        """Retrieve response from Semantic Cache, falling back to Redis exact-match."""
+        
+        # 1. Check Semantic Cache (ChromaDB)
+        if self.semantic_cache:
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                
+                results = await loop.run_in_executor(
+                    None,
+                    lambda: self.semantic_cache.query(
+                        query_texts=[query],
+                        n_results=1
+                    )
+                )
+                
+                # Check distances (cosine distance - closer to 0 is better)
+                if results and results['distances'] and len(results['distances'][0]) > 0:
+                    distance = results['distances'][0][0]
+                    # Score < 0.15 is highly semantically similar
+                    if distance < 0.15:
+                        cached_response = results['metadatas'][0][0]['response']
+                        from app.metrics.prometheus import semantic_cache_hit_total
+                        semantic_cache_hit_total.inc()
+                        logger.info("Semantic Cache Hit", query=query, distance=distance)
+                        return cached_response
+                        
+            except Exception as e:
+                logger.error("ChromaDB semantic cache get failed", error=str(e))
+                
+        # 2. Check Exact Match Cache (Redis)
         if self.redis_client:
             try:
-                import hashlib
                 from app.metrics.prometheus import redis_cache_hit_total, redis_cache_miss_total
                 
                 query_hash = hashlib.sha256(query.strip().lower().encode()).hexdigest()
@@ -219,10 +300,10 @@ class DataCollector:
                     return cached
                 else:
                     redis_cache_miss_total.inc()
-                    return None
+                    
             except Exception as e:
-                print(f"Redis cache get failed: {e}")
-                return None
+                logger.error("Redis cache get failed", error=str(e))
+                
         return None
 
 # Global instance and lock

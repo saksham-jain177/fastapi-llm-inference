@@ -28,6 +28,7 @@ dependencies = [
     "motor>=3.3.0",
     "dnspython",
     "duckduckgo-search>=4.0.0",
+    "loguru>=0.7.2",
 ]
 
 [project.optional-dependencies]

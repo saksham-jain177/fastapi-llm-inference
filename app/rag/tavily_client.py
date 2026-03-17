@@ -10,6 +10,9 @@ from tavily import TavilyClient
 from typing import List, Dict, Optional
 from functools import lru_cache
 from datetime import datetime, timedelta
+from app.observability.logger import get_logger
+
+logger = get_logger()
 
 
 class RateLimiter:
@@ -102,7 +105,7 @@ class CachedTavilyRAG:
         # Rate limiting
         if not self.rate_limiter.allow_request():
             wait_time = self.rate_limiter.wait_time()
-            print(f"Rate limit reached. Waiting {wait_time:.1f}s...")
+            logger.warning("Rate limit reached", wait_time=f"{wait_time:.1f}s")
             await asyncio.sleep(wait_time)
         
         # Retry logic
@@ -134,10 +137,10 @@ class CachedTavilyRAG:
             except Exception as e:
                 if attempt < max_retries - 1:
                     backoff = 2 ** attempt
-                    print(f"Tavily API error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {backoff}s...")
+                    logger.warning("Tavily API error, retrying", error=str(e), attempt=attempt+1, max_retries=max_retries, backoff=f"{backoff}s")
                     await asyncio.sleep(backoff)
                 else:
-                    print(f"Tavily API error after {max_retries} attempts: {e}")
+                    logger.error("Tavily API error after max attempts", error=str(e), max_retries=max_retries)
                     return []
     
     async def get_context(self, query: str, max_results: int = 3) -> str:

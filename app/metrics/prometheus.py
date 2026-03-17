@@ -66,6 +66,11 @@ redis_cache_miss_total = Counter(
     'Total number of Redis cache misses'
 )
 
+semantic_cache_hit_total = Counter(
+    'semantic_cache_hit_total',
+    'Total number of successful ChromaDB semantic cache hits'
+)
+
 mongodb_read_total = Counter(
     'mongodb_read_total',
     'Total number of MongoDB read operations'
