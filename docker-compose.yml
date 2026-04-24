@@ -43,6 +43,26 @@ services:
     depends_on:
       - prometheus
 
+  # vLLM (High-Concurrency Inference Engine)
+  vllm:
+    image: vllm/vllm-openai:latest
+    profiles:
+      - gpu
+    ports:
+      - "8001:8000"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    command: --model Qwen/Qwen2.5-0.5B-Instruct --dtype bfloat16 --max-model-len 2048
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 volumes:
   redis_data:
   mongo_data:

@@ -31,6 +31,7 @@ dependencies = [
     "loguru>=0.7.2",
     "slowapi>=0.1.9",
     "aiofiles>=23.2.1",
+    "litellm>=1.0.0",
 ]
 
 [project.optional-dependencies]

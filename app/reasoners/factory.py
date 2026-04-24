@@ -13,6 +13,7 @@ from app.reasoners.deterministic import DeterministicReasoner
 
 if TYPE_CHECKING:
     from app.reasoners.ollama_backend import OllamaReasoner
+    from app.reasoners.litellm_backend import LitellmReasoner
 
 
 # Singleton instance and lock
@@ -27,8 +28,9 @@ def get_reasoner() -> Reasoner:
 
     Selection logic:
     1. If USE_DETERMINISTIC_INFERENCE=true -> DeterministicReasoner
-    2. Else if provider == ollama -> OllamaReasoner
-    3. Else -> DeterministicReasoner (fallback)
+    2. Else if provider == litellm -> LitellmReasoner
+    3. Else if provider == ollama -> OllamaReasoner
+    4. Else -> DeterministicReasoner (fallback)
 
     Returns:
         Concrete Reasoner instance
@@ -55,7 +57,16 @@ def get_reasoner() -> Reasoner:
             return _reasoner_instance
 
         # Determine provider
-        provider = os.getenv("INFERENCE_PROVIDER", "ollama").lower()
+        provider = os.getenv("INFERENCE_PROVIDER", "litellm").lower()
+
+        if provider == "litellm":
+            try:
+                from app.reasoners.litellm_backend import LitellmReasoner
+                print("🌐 Using LitellmReasoner (Standardized Endpoint routing)")
+                _reasoner_instance = LitellmReasoner()
+                return _reasoner_instance
+            except ImportError as e:
+                print(f"⚠️ LiteLLM unavailable ({e}), trying fallback provider")
 
         if provider == "ollama":
             try:
