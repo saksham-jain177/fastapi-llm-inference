@@ -16,30 +16,59 @@ logger = get_logger()
 
 
 class RateLimiter:
-    """Simple rate limiter for API calls."""
+    """Redis-backed rate limiter with memory fallback for API calls."""
     
     def __init__(self, max_calls: int = 10, period_seconds: int = 60):
         self.max_calls = max_calls
         self.period_seconds = period_seconds
-        self.calls = []
+        self.local_calls = []
     
-    def allow_request(self) -> bool:
-        """Check if request is allowed under rate limit."""
+    async def wait_if_needed(self):
+        """Asynchronously wait if rate limit is exceeded using Redis sliding window."""
+        import uuid
         now = time.time()
-        # Remove calls outside the window
-        self.calls = [call_time for call_time in self.calls if now - call_time < self.period_seconds]
         
-        if len(self.calls) < self.max_calls:
-            self.calls.append(now)
-            return True
-        return False
-    
-    def wait_time(self) -> float:
-        """Return seconds to wait before next allowed request."""
-        if not self.calls:
-            return 0.0
-        oldest_call = min(self.calls)
-        return max(0.0, self.period_seconds - (time.time() - oldest_call))
+        # Try Redis first
+        try:
+            from app.rag.data_collector import get_data_collector
+            collector = get_data_collector()
+            if collector.redis_client:
+                key = "rate_limit:tavily_api"
+                window_start = now - self.period_seconds
+                
+                # Cleanup old calls
+                await collector.redis_client.zremrangebyscore(key, 0, window_start)
+                
+                # Count current
+                count = await getattr(collector.redis_client, "zcard")(key)
+                
+                if count >= self.max_calls:
+                    oldest = await getattr(collector.redis_client, "zrange")(key, 0, 0, withscores=True)
+                    if oldest:
+                        oldest_time = oldest[0][1]
+                        wait_time = max(0.0, self.period_seconds - (now - oldest_time))
+                        logger.warning("Redis rate limit reached", wait_time=f"{wait_time:.1f}s")
+                        await asyncio.sleep(wait_time)
+                        # Re-calculate now after wait
+                        now = time.time()
+                
+                # Add this request
+                await getattr(collector.redis_client, "zadd")(key, {str(uuid.uuid4()): now})
+                await collector.redis_client.expire(key, self.period_seconds * 2)
+                return
+        except Exception as e:
+            logger.error("Redis rate limiter failed, falling back to local memory", error=str(e))
+            
+        # Fallback Local memory sliding window
+        self.local_calls = [c for c in self.local_calls if now - c < self.period_seconds]
+        if len(self.local_calls) >= self.max_calls:
+            oldest_call = min(self.local_calls)
+            wait_time = max(0.0, self.period_seconds - (now - oldest_call))
+            logger.warning("Local memory rate limit reached", wait_time=f"{wait_time:.1f}s")
+            await asyncio.sleep(wait_time)
+            now = time.time() # Update now after sleep
+                
+        self.local_calls.append(now)
 
 
 class CachedTavilyRAG:
@@ -102,11 +131,8 @@ class CachedTavilyRAG:
         
         self.cache_misses += 1
         
-        # Rate limiting
-        if not self.rate_limiter.allow_request():
-            wait_time = self.rate_limiter.wait_time()
-            logger.warning("Rate limit reached", wait_time=f"{wait_time:.1f}s")
-            await asyncio.sleep(wait_time)
+        # Rate limiting wait
+        await self.rate_limiter.wait_if_needed()
         
         # Retry logic
         for attempt in range(max_retries):
@@ -168,7 +194,7 @@ class CachedTavilyRAG:
             "cache_hits": self.cache_hits,
             "cache_misses": self.cache_misses,
             "hit_rate_percent": round(hit_rate, 2),
-            "rate_limit_calls_remaining": self.rate_limiter.max_calls - len(self.rate_limiter.calls)
+            "rate_limit_calls_remaining": self.rate_limiter.max_calls - len(self.rate_limiter.local_calls) # Local fallback context
         }
 
 

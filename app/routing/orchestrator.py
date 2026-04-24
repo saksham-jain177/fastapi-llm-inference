@@ -27,7 +27,7 @@ class Orchestrator:
         self.reasoner = get_reasoner()  # Factory-provided, interface-only
         self.adapter_mgr = get_adapter_manager()
 
-    async def route_and_execute(self, query: str, feedback_intent: str = None, headers: dict = None) -> dict:
+    async def route_and_execute(self, query: str, feedback_intent: str = None, headers: dict = None, background_tasks = None) -> dict:
         """
         Execute full request pipeline using Truth-First Inference.
         
@@ -63,16 +63,18 @@ class Orchestrator:
                 "mode": "refused"
             }
             
-            # Log refusal
+            # Log refusal in background if task queue provided
             collector = get_data_collector()
-            await collector.log_interaction(
-                query=query,
-                context="none",
-                response=refusal_response,
-                intent="refused",
-                confidence=0.0,
-                source="refused"
-            )
+            if background_tasks:
+                background_tasks.add_task(
+                    collector.log_interaction,
+                    query=query,
+                    context="none",
+                    response=refusal_response,
+                    intent="refused",
+                    confidence=0.0,
+                    source="refused"
+                )
             return response_data
 
         # 1. Semantic Classification
@@ -215,15 +217,17 @@ class Orchestrator:
                     refusal_counter.inc()
                     log_intent = "refused"
 
-        # Final Centralized Awaited Side Effect
-        await collector.log_interaction(
-            query=query,
-            context=context or "none",
-            response=final_response,
-            intent=log_intent,
-            confidence=response_data.get("confidence", 0.0),
-            source=response_data.get("source", "model")
-        )
+        # Final Centralized Awaited Side Effect (in background)
+        if background_tasks:
+            background_tasks.add_task(
+                collector.log_interaction,
+                query=query,
+                context=context or "none",
+                response=final_response,
+                intent=log_intent,
+                confidence=response_data.get("confidence", 0.0),
+                source=response_data.get("source", "model")
+            )
         
         return response_data
 

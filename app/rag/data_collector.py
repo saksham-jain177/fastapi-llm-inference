@@ -146,9 +146,9 @@ class DataCollector:
         
         # Fallback to File
         try:
-            # Note: File writing is sync/blocking, but acceptable for fallback
-            with open(self.log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+            import aiofiles
+            async with aiofiles.open(self.log_file, "a", encoding="utf-8") as f:
+                await f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
         except Exception as e:
             logger.error("Error logging interaction", error=str(e))
 

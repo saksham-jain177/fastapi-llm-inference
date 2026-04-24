@@ -29,6 +29,8 @@ dependencies = [
     "dnspython",
     "duckduckgo-search>=4.0.0",
     "loguru>=0.7.2",
+    "slowapi>=0.1.9",
+    "aiofiles>=23.2.1",
 ]
 
 [project.optional-dependencies]

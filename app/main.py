@@ -7,10 +7,17 @@ import random
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from fastapi import Request
+from fastapi import Request, BackgroundTasks
 from starlette.middleware.base import BaseHTTPMiddleware
 import uuid
 from app.observability.logger import get_logger, request_id_cvar
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+# Setup SlowAPI Limiter (Uses memory by default, fallback resilient)
+limiter = Limiter(key_func=get_remote_address)
 
 # Load environment variables from .env file (for local development)
 env_path = Path(__file__).parent / '.env'
@@ -40,6 +47,8 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 # Enable CORS for Frontend
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(CorrelationIdMiddleware)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000"],
@@ -65,29 +74,7 @@ USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
 # Security: Maximum prompt length (characters) to prevent DoS/OOM
 MAX_PROMPT_LENGTH = int(os.getenv("MAX_PROMPT_LENGTH", "8192"))
 
-# Rate Limiting: Simple sliding window via Redis
-RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "30"))
-RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
-
-async def check_rate_limit(client_ip: str) -> bool:
-    """
-    Redis-backed rate limiter. Returns True if request is allowed.
-    Fails open (allows) on Redis errors.
-    """
-    try:
-        from app.rag.data_collector import get_data_collector
-        collector = get_data_collector()
-        if not collector.redis_client:
-            return True  # Fail open
-        
-        key = f"rate_limit:{client_ip}"
-        current = await collector.redis_client.incr(key)
-        if current == 1:
-            await collector.redis_client.expire(key, RATE_LIMIT_WINDOW_SECONDS)
-        
-        return current <= RATE_LIMIT_REQUESTS
-    except Exception:
-        return True  # Fail open on Redis errors
+# Rate Limiting is now handled by SlowAPI using the Limiter instance
 
 
 @app.get("/docs", include_in_schema=False)
@@ -162,7 +149,7 @@ def model_info():
     return info
 
 @app.post("/infer")
-def infer(request: InferenceRequest, req: Request):
+async def infer(request: InferenceRequest, req: Request):
     if not os.getenv("API_KEY"):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
@@ -212,7 +199,7 @@ def infer(request: InferenceRequest, req: Request):
 
 
 @app.post("/infer-stream")
-def infer_stream(request: InferenceRequest):
+async def infer_stream(request: InferenceRequest):
     """
     Streaming endpoint: Yields tokens as they are generated using Server-Sent Events (SSE).
     """
@@ -238,7 +225,7 @@ def infer_stream(request: InferenceRequest):
 
 
 @app.post("/infer-rag")
-def infer_rag(request: InferenceRequest):
+async def infer_rag(request: InferenceRequest):
     """
     RAG endpoint: Fetches context from Tavily, then generates response.
     More accurate than base /infer due to real-time information retrieval.
@@ -289,7 +276,7 @@ Answer:"""
 
 
 @app.post("/infer-lora")
-def infer_lora(request: InferenceRequest):
+async def infer_lora(request: InferenceRequest):
     """
     LoRA endpoint: Uses fine-tuned LoRA adapter for inference.
     Better at code generation and technical tasks due to fine-tuning.
@@ -322,7 +309,8 @@ def infer_lora(request: InferenceRequest):
 
 
 @app.post("/infer-adaptive", response_model=InferenceResponse)
-async def infer_adaptive(request: InferenceRequest, req: Request):
+@limiter.limit("30/minute")
+async def infer_adaptive(request: InferenceRequest, req: Request, background_tasks: BackgroundTasks):
     """
     Adaptive routing using Agentic RAG architecture.
     """
@@ -341,12 +329,7 @@ async def infer_adaptive(request: InferenceRequest, req: Request):
             refused=True
         )
     
-    # Security: Rate limiting
-    client_ip = req.client.host if req.client else "unknown"
-    if not await check_rate_limit(client_ip):
-        from app.metrics.prometheus import response_refusal_total
-        response_refusal_total.inc()
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    # Security: Rate limiting is now handled by @limiter decorator natively
     
     # Content moderation verification
     from app.moderation.factory import get_moderator
@@ -361,7 +344,7 @@ async def infer_adaptive(request: InferenceRequest, req: Request):
         orchestrator = get_orchestrator()
         
         # Await async routing
-        result = await orchestrator.route_and_execute(request.prompt, headers=dict(req.headers))
+        result = await orchestrator.route_and_execute(request.prompt, headers=dict(req.headers), background_tasks=background_tasks)
         
         # Map to contract
         response = InferenceResponse(
@@ -483,7 +466,8 @@ class FeedbackRequest(BaseModel):
 
 
 @app.post("/feedback")
-async def submit_feedback(feedback: FeedbackRequest, request: Request):
+@limiter.limit("1/second")
+async def submit_feedback(feedback: FeedbackRequest, request: Request, background_tasks: BackgroundTasks):
     """
     Log user feedback for RLHF (3-label system).
     Guardian: Rate limited to 1 request per 2 seconds per IP (Redis-backed).
@@ -492,23 +476,13 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
         from app.rag.data_collector import get_data_collector
         collector = get_data_collector()
         
-        # 1. Redis Rate Limiting
-        client_ip = request.client.host
-        key = f"rate_limit:{client_ip}"
+        # 1. Rate Limiting is now handled natively via SlowAPI decorator
         
-        # Check if key exists
-        if collector.redis_client:
-            last_request = await collector.redis_client.get(key)
-            if last_request:
-                return {"status": "ignored", "message": "Rate limit exceeded"}
-            
-            # Set key with 2 second expiry
-            await collector.redis_client.set(key, "1", ex=2)
-        
-        # 2. Log Data (via DataCollector -> Mongo)
+        # 2. Log Data (via DataCollector -> Mongo in Background)
         
         # Log with new schema
-        await collector.log_interaction(
+        background_tasks.add_task(
+            collector.log_interaction,
             query=feedback.query,
             context="User Feedback", 
             response=feedback.response,
