@@ -1,6 +1,6 @@
 import sys
 import contextvars
-from loguru import logger
+from loguru import logger  # type: ignore
 from types import FrameType
 from typing import cast
 
@@ -23,6 +23,8 @@ logger.add(
     level="INFO",
     serialize=False, # Set to True in actual prod for raw JSON, False is better for local dev reading. We'll use False for better human readability in terminal, but with structured tags.
     enqueue=True,    # Thread-safe async logging
+    diagnose=False,  # SECURITY: Prevent leaking local variables (like user prompts) in exception traces
+    backtrace=False, # SECURITY: Prevent verbose tracing which can leak internal PII state
 )
 
 def get_logger():

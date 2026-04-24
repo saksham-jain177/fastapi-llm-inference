@@ -31,7 +31,7 @@ def check_gpu():
     """Verify GPU availability on the host."""
     print("🔍 Checking GPU availability...")
     try:
-        import torch
+        import torch  # type: ignore
         if torch.cuda.is_available():
             print(f"✅ GPU detected: {torch.cuda.get_device_name(0)}")
             return True
@@ -57,6 +57,13 @@ def start_backend():
 def start_frontend():
     """Start the React frontend on the host."""
     print("⚛️ Starting Frontend (Vite)...")
+    
+    # Auto-install dependencies if missing
+    frontend_dir = os.path.join(os.getcwd(), "frontend")
+    if not os.path.exists(os.path.join(frontend_dir, "node_modules")):
+        print("📦 First run detected for frontend. Installing dependencies...")
+        subprocess.run(["npm", "install"], cwd=frontend_dir, shell=True, check=True)
+        
     # Use shell=True for Windows npm resolution
     return subprocess.Popen(
         ["npm", "run", "dev"],
