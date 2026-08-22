@@ -51,6 +51,28 @@ deletes a document; `kb.count()` reports total stored chunks.
 | `KB_COLLECTION`     | `internal_kb`      | collection name                                  |
 | `KB_MIN_SIMILARITY` | `0.25`             | min similarity (1 − cosine distance) for evidence |
 
+## Threshold relationships
+
+Two independent gates decide whether the model may answer. They measure
+**different things** and must be tuned separately:
+
+| Gate | Env/config | Default | Unit | What it measures |
+|------|-----------|---------|------|------------------|
+| Evidence gate (this module) | `KB_MIN_SIMILARITY` | `0.25` | cosine-derived embedding similarity (0–1) | Does the query resemble curated KB content? |
+| Epistemic gate (`app/models/calibration.py`) | `data/confidence_calibration.json` | `0.75` | model self-consistency confidence (0–1) | Is the model internally consistent about its draft answer? |
+
+Routing consequence: a query first needs evidence (`has_evidence=True`, gated
+by `KB_MIN_SIMILARITY`) **and then** epistemic confidence ≥ threshold to reach
+the `model` path. Lowering `KB_MIN_SIMILARITY` widens what counts as
+*evidence*; lowering the epistemic threshold widens when a *confident* answer
+is trusted. Neither implies the other.
+
+The offline report (`uv run python -m scripts.calibration_report`) shows both
+values side by side but only ever SUGGESTS the epistemic threshold — changing
+the evidence bar changes what counts as truth and stays a human decision.
+Feedback labels (`incorrect`, `should_have_refused`) feed the epistemic
+suggestion; they carry no embedding-similarity signal.
+
 ## Degradation
 
 If chromadb or the embedding model is unavailable, retrieval returns

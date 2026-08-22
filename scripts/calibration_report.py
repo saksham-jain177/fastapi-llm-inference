@@ -56,6 +56,12 @@ def compute_suggestions(
       the confidence level at which most mistakes happen.
     - semantic_threshold: kept informational here; feedback does not carry
       semantic scores, so we only report label coverage for it.
+
+    The KB evidence threshold (KB_MIN_SIMILARITY) is a separate knob with a
+    different unit (cosine-derived embedding similarity, NOT model
+    confidence): it is reported for context but never suggested here —
+    changing it changes what counts as EVIDENCE, which must stay a deliberate,
+    human-reviewed decision. See docs/internal_kb.md "Threshold relationships".
     """
     negative_confidences = []   # incorrect + should_have_refused
     correct_confidences = []
@@ -85,6 +91,7 @@ def compute_suggestions(
         "negative_count": len(negative_confidences),
         "correct_count": len(correct_confidences),
         "current_epistemic_threshold": _load_current_threshold(),
+        "current_kb_min_similarity": _load_kb_min_similarity(),
         "suggested_epistemic_threshold": None,
         "basis": None,
         "correct_above_suggested": None,
@@ -129,6 +136,13 @@ def _load_current_threshold() -> float:
     return get_confidence_threshold()
 
 
+def _load_kb_min_similarity() -> float:
+    """Read the KB evidence threshold (reported for context; never suggested)."""
+    from app.kb import min_similarity
+
+    return min_similarity()
+
+
 async def _gather_interactions() -> list:
     from app.rag.data_collector import get_data_collector
 
@@ -147,6 +161,8 @@ def render(result: dict, as_json: bool = False) -> str:
         f" Labeled feedback samples : {result['labeled_total']}",
         f"   by label               : {result['label_counts']}",
         f" Current epistemic thresh.: {result['current_epistemic_threshold']}",
+        f" Current KB min similarity: {result['current_kb_min_similarity']}"
+        "  (evidence gate — separate knob, not auto-suggested)",
     ]
     if result["suggested_epistemic_threshold"] is None:
         lines.append(f" Suggested threshold      : N/A ({result['basis']})")
