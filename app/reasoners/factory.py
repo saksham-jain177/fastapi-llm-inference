@@ -51,6 +51,33 @@ def get_reasoner() -> Reasoner:
     # Determine provider
     provider = os.getenv("INFERENCE_PROVIDER", "ollama").lower()
 
+    # Multi-model routing: cost/latency-aware selector behind the same
+    # Reasoner interface. Opt-in via MODEL_ROUTING_ENABLED=true.
+    if os.getenv("MODEL_ROUTING_ENABLED", "false").lower() == "true":
+        try:
+            from app.reasoners.router import RoutingReasoner, load_registry
+            from app.reasoners.deterministic import DeterministicReasoner as _Det
+
+            specs = load_registry()
+            backends = {}
+            for spec in specs:
+                if spec.name == "deterministic":
+                    backends[spec.name] = _Det()
+                elif spec.name.startswith("ollama"):
+                    try:
+                        from app.reasoners.ollama_backend import OllamaReasoner
+                        backends[spec.name] = OllamaReasoner()
+                    except ImportError:
+                        print(f"⚠️ Routing: ollama backend unavailable for '{spec.name}', skipping")
+            if backends:
+                fallback = backends.get("deterministic", next(iter(backends.values())))
+                print("🧭 Using RoutingReasoner (cost/latency-aware multi-model routing)")
+                _reasoner_instance = RoutingReasoner(backends, specs=specs, fallback=fallback)
+                return _reasoner_instance
+            print("⚠️ MODEL_ROUTING_ENABLED but no backends available; falling back")
+        except Exception as e:
+            print(f"⚠️ RoutingReasoner unavailable ({e}); falling back")
+
     if provider == "ollama":
         try:
             # Import only when this branch executes
