@@ -154,7 +154,6 @@ def infer(request: InferenceRequest, req: Request):
         raise HTTPException(status_code=413, detail=f"Prompt too long (max {MAX_PROMPT_LENGTH} chars)")
     
     # Hardware-independent fallback (CI/Staging)
-    # Check dynamically to allow testing overrides
     use_mock = os.getenv("USE_MOCK", "false").lower() == "true"
     use_det = os.getenv("USE_DETERMINISTIC_INFERENCE", "false").lower() == "true"
     
@@ -229,6 +228,10 @@ def infer_rag(request: InferenceRequest):
     if not os.getenv("API_KEY"):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
     
+    # Security: Prompt Length
+    if len(request.prompt) > MAX_PROMPT_LENGTH:
+        raise HTTPException(status_code=413, detail=f"Prompt too long (max {MAX_PROMPT_LENGTH} chars)")
+    
     # Content moderation
     from app.moderation.factory import get_moderator
     moderator = get_moderator()
@@ -279,6 +282,10 @@ def infer_lora(request: InferenceRequest):
     """
     if not os.getenv("API_KEY"):
         raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
+    
+    # Security: Prompt Length
+    if len(request.prompt) > MAX_PROMPT_LENGTH:
+        raise HTTPException(status_code=413, detail=f"Prompt too long (max {MAX_PROMPT_LENGTH} chars)")
     
     # Content moderation
     from app.moderation.factory import get_moderator
@@ -475,9 +482,10 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
         from app.rag.data_collector import get_data_collector
         collector = get_data_collector()
         
-        # 1. Redis Rate Limiting
+        # 1. Redis Rate Limiting (namespaced key — must not collide with
+        #    the per-endpoint `rate_limit:{ip}` counters used by /infer-adaptive)
         client_ip = request.client.host
-        key = f"rate_limit:{client_ip}"
+        key = f"rate_limit:feedback:{client_ip}"
         
         # Check if key exists
         if collector.redis_client:
