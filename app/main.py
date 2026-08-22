@@ -31,6 +31,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Structured logging + request-ID correlation (see app/observability/logging_setup.py)
+from app.observability.logging_setup import (
+    get_logger,
+    new_request_id,
+    request_id_var,
+)
+
+logger = get_logger("main")
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Assign/propagate X-Request-ID and bind it to all log records."""
+    rid = request.headers.get("x-request-id") or new_request_id()
+    token = request_id_var.set(rid)
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_var.reset(token)
+    response.headers["X-Request-ID"] = rid
+    return response
+
+
 class InferenceRequest(BaseModel):
     prompt: str
 
