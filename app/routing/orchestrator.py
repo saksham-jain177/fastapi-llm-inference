@@ -19,6 +19,9 @@ from app.routing.information_gate import is_informative
 from app.routing.response_utils import is_incomplete, clean_citations
 
 from app.observability.telemetry import get_telemetry_logger
+from app.observability.logging_setup import get_logger
+
+logger = get_logger("routing.orchestrator")
 
 class Orchestrator:
     def __init__(self):
@@ -48,7 +51,7 @@ class Orchestrator:
 
         # 0. Information Density Check
         if not is_informative(query):
-            print(f"  🛑 Low information query refused: '{query}'")
+            logger.info("Low information query refused: %r", query)
             refusal_response = "Please provide a more specific, information-seeking question."
             
             response_data = {
@@ -91,7 +94,7 @@ class Orchestrator:
         if hasattr(collector, 'get_cached_response'):
             cached_resp = await collector.get_cached_response(query)
             if cached_resp:
-                print(f"  ⚡ Redis Cache Hit")
+                logger.info("Redis cache hit")
                 response_data.update({
                     "mode": "redis_cache",
                     "response": cached_resp,
@@ -107,7 +110,7 @@ class Orchestrator:
 
         # Path A: Specialized Adapter (Strictly matched domain)
         if self.adapter_mgr.has_adapter(domain):
-            print(f"[Orchestrator] Using adapter for domain: {domain}")
+            logger.info("Using adapter for domain: %s", domain)
             # Sync call for model inference
             resp = self.adapter_mgr.generate_with_adapter(domain, query)
             final_response = resp
@@ -149,16 +152,16 @@ class Orchestrator:
                 epistemic_confidence=None  # Not relevant without evidence
             )
             
-            print(f"  → KnowledgeGate Decision: {decision.upper()} (semantic: {semantic_conf:.2f}, has_evidence: {has_evidence})")
+            logger.info("KnowledgeGate decision: %s (semantic: %.2f, has_evidence: %s)", decision.upper(), semantic_conf, has_evidence)
             
             if decision == "rag":
                 # Search for evidence
-                print("    → No evidence available, searching...")
+                logger.info("No evidence available, searching")
                 final_response, context, citations, log_intent = await self._execute_external_rag(query, collector, response_data)
                 gate_decision_total.labels(decision="fallback_rag", reason="no_evidence").inc()
                 
             elif decision == "refuse":
-                print("    → Explicit refusal (no safe path)")
+                logger.info("Explicit refusal (no safe path)")
                 final_response = CANONICAL_REFUSAL
                 response_data.update({
                     "mode": "refused",
@@ -179,7 +182,7 @@ class Orchestrator:
                 async def generate_wrapper(p, temperature=0.3, max_new_tokens=256):
                     return self.adapter_mgr.generate_with_adapter("base", p, temperature=temperature, max_new_tokens=max_new_tokens)
                 
-                print(f"[Orchestrator] Evidence-backed path - checking epistemic confidence")
+                logger.info("Evidence-backed path - checking epistemic confidence")
                 draft_response, epistemic_conf = await estimator.estimate_confidence(query, generate_wrapper)
                 
                 # Re-check with epistemic confidence
@@ -200,7 +203,7 @@ class Orchestrator:
                     gate_decision_total.labels(decision="allow", reason="evidence_backed").inc()
                 else:
                     # Epistemic check failed
-                    print("    → Epistemic confidence too low, refusing")
+                    logger.info("Epistemic confidence too low, refusing")
                     final_response = CANONICAL_REFUSAL
                     response_data.update({
                         "mode": "refused",
@@ -266,11 +269,11 @@ class Orchestrator:
             })
             log_intent = "rag-external"
         except asyncio.TimeoutError:
-            print(f"RAG timed out for query: {query}")
+            logger.warning("RAG timed out for query: %s", query)
             final_response = "External search or synthesis timed out. Please try a simpler query."
             response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
         except Exception as e:
-            print(f"RAG failed: {e}")
+            logger.error("RAG failed: %s", e)
             final_response = "External search failed."
             response_data.update({"mode": "refused", "response": final_response, "refused": True, "source": "refused"})
         
