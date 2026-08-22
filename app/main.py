@@ -386,6 +386,96 @@ async def infer_adaptive(request: InferenceRequest, req: Request):
         raise HTTPException(status_code=500, detail=f"Adaptive routing failed: {str(e)}")
 
 
+@app.post("/infer-adaptive/stream")
+async def infer_adaptive_stream(request: InferenceRequest, req: Request):
+    """
+    Streaming variant of /infer-adaptive.
+
+    Runs the exact same adaptive-routing pipeline and guard chain as
+    /infer-adaptive, then delivers the final answer over Server-Sent Events
+    (token/word chunks), reusing the /infer-stream pattern. SSE event types:
+      - "metadata": routing result (source/intent/confidence/refused) first
+      - "token":    successive chunks of the answer
+      - "done":     terminal marker "[DONE]"
+    Guard failures (moderation 400, rate limit 429) raise before the stream
+    starts; in-pipeline refusals are streamed as normal answers with
+    refused=true metadata.
+    """
+    from sse_starlette.sse import EventSourceResponse
+
+    if not os.getenv("API_KEY"):
+        raise HTTPException(status_code=500, detail="Server misconfigured: API_KEY missing")
+
+    # Security: Prompt size guard (same contract as /infer-adaptive)
+    if len(request.prompt) > MAX_PROMPT_LENGTH:
+        from app.metrics.prometheus import response_refusal_total
+        response_refusal_total.inc()
+        raise HTTPException(
+            status_code=413,
+            detail=f"Prompt too long (max {MAX_PROMPT_LENGTH} chars)"
+        )
+
+    # Security: Rate limiting (same shared limiter as /infer-adaptive)
+    client_ip = req.client.host if req.client else "unknown"
+    if not await check_rate_limit(client_ip):
+        from app.metrics.prometheus import response_refusal_total
+        response_refusal_total.inc()
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    # Content moderation verification
+    from app.moderation.factory import get_moderator
+    moderator = get_moderator()
+    is_safe, reason = moderator.moderate(request.prompt)
+    if not is_safe:
+        raise HTTPException(status_code=400, detail=f"Content policy violation: {reason}")
+
+    async def adaptive_event_generator():
+        try:
+            from app.routing.orchestrator import get_orchestrator
+            orchestrator = get_orchestrator()
+            result = await orchestrator.route_and_execute(request.prompt, headers=dict(req.headers))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield {"event": "error", "data": f"Adaptive routing failed: {str(e)}"}
+            return
+
+        # Metric increment at API boundary (mirrors /infer-adaptive)
+        from app.metrics.prometheus import response_refusal_total, response_confidence_bucket_total
+
+        if result.get("refused", False):
+            response_refusal_total.inc()
+
+        confidence = result.get("confidence", 0.0)
+        if confidence > 0.8:
+            bucket = "high"
+        elif confidence >= 0.5:
+            bucket = "medium"
+        else:
+            bucket = "low"
+        response_confidence_bucket_total.labels(bucket=bucket).inc()
+
+        # Metadata event first so clients can render source/refusal state
+        import json
+        meta = {
+            "source": result.get("source", "unknown"),
+            "intent": result.get("intent", "unknown"),
+            "confidence": confidence,
+            "refused": result.get("refused", False),
+            "citations": result.get("citations", []),
+            "cache_hit": result.get("cache_hit", False),
+        }
+        yield {"event": "metadata", "data": json.dumps(meta)}
+
+        # Stream the final answer word-by-word (orchestration is not
+        # token-incremental; this matches the /infer-stream delivery style)
+        for word in str(result.get("response", "")).split(" "):
+            yield {"event": "token", "data": word + " "}
+        yield {"event": "done", "data": "[DONE]"}
+
+    return EventSourceResponse(adaptive_event_generator())
+
+
 @app.get("/metrics")
 def metrics():
     """
