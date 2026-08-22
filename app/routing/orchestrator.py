@@ -20,9 +20,11 @@ from app.routing.response_utils import is_incomplete, clean_citations
 
 from app.observability.telemetry import get_telemetry_logger
 from app.observability.logging_setup import get_logger
+from app.metrics.route_metrics import instrument_orchestrator
 
 logger = get_logger("routing.orchestrator")
 
+@instrument_orchestrator
 class Orchestrator:
     def __init__(self):
         self.reasoner = get_reasoner()  # Factory-provided, interface-only
