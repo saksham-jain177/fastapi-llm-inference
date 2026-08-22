@@ -13,7 +13,7 @@ LLM inference API built with FastAPI, focusing on quantization, adaptive routing
 
 ```bash
 # Install dependencies
-uv pip sync uv.lock
+uv sync --all-extras
 
 # Configure environment
 cp app/.env.example app/.env

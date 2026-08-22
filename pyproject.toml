@@ -44,6 +44,7 @@ dev = [
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-ra"
+asyncio_mode = "auto"
 
 [tool.black]
 line-length = 88
