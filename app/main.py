@@ -615,7 +615,7 @@ async def system_stats():
             
         stats["storage_source"] = db_stats["source"]
     except Exception as e:
-        print(f"Stats sync error: {e}")
+        logger.warning("Stats sync error: %s", e)
         
     return stats
 
@@ -702,6 +702,6 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
         
         return {"status": "recorded", "message": "Feedback saved for training"}
     except Exception as e:
-        print(f"Feedback log error: {e}")
+        logger.error("Feedback log error: %s", e)
         return {"status": "error", "message": str(e)}
 

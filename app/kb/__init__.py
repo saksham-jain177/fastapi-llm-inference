@@ -25,6 +25,10 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from app.observability.logging_setup import get_logger
+
+logger = get_logger("kb")
+
 
 def _persist_dir() -> Path:
     return Path(os.getenv("KB_PERSIST_DIR", "data/chroma_kb"))
@@ -65,7 +69,7 @@ class InternalKB:
                     "sentence-transformers/all-MiniLM-L6-v2"
                 )
             except Exception as e:
-                print(f"InternalKB: embedding model unavailable ({e})")
+                logger.warning("embedding model unavailable: %s", e)
                 self._embedding_model = False  # sentinel: failed load
         return self._embedding_model or None
 
@@ -94,7 +98,7 @@ class InternalKB:
                     metadata={"hnsw:space": "cosine"},
                 )
             except Exception as e:
-                print(f"InternalKB: chromadb unavailable, KB disabled. {e}")
+                logger.warning("chromadb unavailable, KB disabled: %s", e)
                 self._collection = False  # sentinel: failed init
         return self._collection or None
 
@@ -148,7 +152,7 @@ class InternalKB:
         try:
             collection.add(documents=chunks, ids=ids, metadatas=metadatas)
         except Exception as e:
-            print(f"InternalKB: failed to ingest '{doc_id}': {e}")
+            logger.error("failed to ingest %r: %s", doc_id, e)
             return 0
         return len(chunks)
 
@@ -161,7 +165,7 @@ class InternalKB:
             collection.delete(where={"doc_id": doc_id})
             return True
         except Exception as e:
-            print(f"InternalKB: failed to remove '{doc_id}': {e}")
+            logger.error("failed to remove %r: %s", doc_id, e)
             return False
 
     def count(self) -> int:
@@ -194,7 +198,7 @@ class InternalKB:
         try:
             res = collection.query(query_texts=[query], n_results=min(top_k, collection.count()))
         except Exception as e:
-            print(f"InternalKB: retrieval failed: {e}")
+            logger.error("retrieval failed: %s", e)
             return False, []
 
         results = []

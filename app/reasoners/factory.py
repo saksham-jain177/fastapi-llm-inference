@@ -8,8 +8,11 @@ No inference logic. Vendor imports only when that branch executes.
 import os
 from typing import TYPE_CHECKING
 
+from app.observability.logging_setup import get_logger
 from app.reasoners.base import Reasoner
 from app.reasoners.deterministic import DeterministicReasoner
+
+logger = get_logger("reasoners.factory")
 
 if TYPE_CHECKING:
     from app.reasoners.ollama_backend import OllamaReasoner
@@ -44,7 +47,7 @@ def get_reasoner() -> Reasoner:
         use_deterministic = True
 
     if use_deterministic:
-        print("🔧 Using DeterministicReasoner (hardware-independent mode)")
+        logger.info("Using DeterministicReasoner (hardware-independent mode)")
         _reasoner_instance = DeterministicReasoner()
         return _reasoner_instance
 
@@ -68,30 +71,30 @@ def get_reasoner() -> Reasoner:
                         from app.reasoners.ollama_backend import OllamaReasoner
                         backends[spec.name] = OllamaReasoner()
                     except ImportError:
-                        print(f"⚠️ Routing: ollama backend unavailable for '{spec.name}', skipping")
+                        logger.warning("Routing: ollama backend unavailable for %r, skipping", spec.name)
             if backends:
                 fallback = backends.get("deterministic", next(iter(backends.values())))
-                print("🧭 Using RoutingReasoner (cost/latency-aware multi-model routing)")
+                logger.info("Using RoutingReasoner (cost/latency-aware multi-model routing)")
                 _reasoner_instance = RoutingReasoner(backends, specs=specs, fallback=fallback)
                 return _reasoner_instance
-            print("⚠️ MODEL_ROUTING_ENABLED but no backends available; falling back")
+            logger.warning("MODEL_ROUTING_ENABLED but no backends available; falling back")
         except Exception as e:
-            print(f"⚠️ RoutingReasoner unavailable ({e}); falling back")
+            logger.warning("RoutingReasoner unavailable (%s); falling back", e)
 
     if provider == "ollama":
         try:
             # Import only when this branch executes
             from app.reasoners.ollama_backend import OllamaReasoner
-            print("🦙 Using OllamaReasoner")
+            logger.info("Using OllamaReasoner")
             _reasoner_instance = OllamaReasoner()
             return _reasoner_instance
         except ImportError as e:
-            print(f"⚠️ Ollama backend unavailable ({e}), falling back to DeterministicReasoner")
+            logger.warning("Ollama backend unavailable (%s), falling back to DeterministicReasoner", e)
             _reasoner_instance = DeterministicReasoner()
             return _reasoner_instance
 
     # Default fallback
-    print("🔧 Using DeterministicReasoner (default fallback)")
+    logger.info("Using DeterministicReasoner (default fallback)")
     _reasoner_instance = DeterministicReasoner()
     return _reasoner_instance
 
