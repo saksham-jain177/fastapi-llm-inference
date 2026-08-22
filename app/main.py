@@ -121,6 +121,84 @@ async def health_check():
             
     return health
 
+@app.get("/health/live")
+async def health_liveness():
+    """
+    Liveness probe: is the process up and able to serve HTTP at all?
+
+    Deliberately checks NO infrastructure. If this fails, the orchestrator
+    should restart the container. Always returns 200 while the event loop
+    is responsive.
+    """
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_readiness():
+    """
+    Readiness probe: can this instance handle inference traffic?
+
+    Checks infrastructure dependencies (Redis, Mongo) with short timeouts.
+    Fails (503) when required backing services are unreachable, so load
+    balancers stop routing to a degraded instance without restarting it.
+
+    Policy note: Redis is treated as required for adaptive serving (cache +
+    rate limiting), but only when REDIS_URL is configured — instances run
+    without infra in CI/local fail-open mode stay ready.
+    """
+    from app.rag.data_collector import get_data_collector
+
+    checks = {"redis": "down", "mongo": "down"}
+    try:
+        collector = get_data_collector()
+
+        if collector.redis_client:
+            try:
+                import asyncio
+                await asyncio.wait_for(collector.redis_client.ping(), timeout=1.0)
+                checks["redis"] = "up"
+            except Exception:
+                pass
+
+        if collector.mongo_collection is not None:
+            try:
+                import asyncio
+                await asyncio.wait_for(
+                    collector.mongo_collection.database.command("ping"), timeout=1.0
+                )
+                checks["mongo"] = "up"
+            except Exception:
+                pass
+
+    except Exception:
+        pass  # Fail-open policy: treat unconfigured infra as not required
+
+    # Only configured dependencies gate readiness
+    required = [k for k, v in checks.items() if v == "down"
+                and (k != "redis" or collector_redis_configured())
+                and (k != "mongo" or collector_mongo_configured())]
+
+    if required:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "unhealthy": required, **checks},
+        )
+    return {"status": "ready", **checks}
+
+
+def collector_redis_configured() -> bool:
+    """True if REDIS_URL was configured (dependency actually required)."""
+    from app.rag.data_collector import get_data_collector
+    return get_data_collector().redis_client is not None
+
+
+def collector_mongo_configured() -> bool:
+    """True if MONGO_URL was configured (dependency actually required)."""
+    from app.rag.data_collector import get_data_collector
+    return get_data_collector().mongo_collection is not None
+
+
 @app.get("/model-info")
 def model_info():
     """Return information about the loaded model and RAG system."""
