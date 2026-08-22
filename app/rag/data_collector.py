@@ -41,6 +41,16 @@ class DataCollector:
             except Exception as e:
                 print(f"DataCollector: Failed to connect to Redis. {e}")
 
+        # ---- Semantic cache config (embedding cosine-similarity lookup) ----
+        # SEMANTIC_CACHE_THRESHOLD: min cosine similarity for a cache hit.
+        # SEMANTIC_CACHE_MAX_ENTRIES: max entries scanned per lookup (bounded scan).
+        self.semantic_cache_enabled = (
+            os.getenv("SEMANTIC_CACHE_ENABLED", "true").lower() == "true"
+        )
+        self.semantic_threshold = float(os.getenv("SEMANTIC_CACHE_THRESHOLD", "0.92"))
+        self.semantic_max_entries = int(os.getenv("SEMANTIC_CACHE_MAX_ENTRIES", "500"))
+        self._embedding_model = None
+
     async def log_interaction(self, 
                        query: str, 
                        context: str, 
@@ -192,28 +202,137 @@ class DataCollector:
         
         return interactions
 
+    def _get_embedding_model(self):
+        """Lazily load the shared sentence-transformer model.
+
+        Returns None in deterministic mode or when the model is unavailable,
+        so callers can fall back to exact-match caching.
+        """
+        if not self.semantic_cache_enabled:
+            return None
+        if self._embedding_model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+
+                self._embedding_model = SentenceTransformer(
+                    "sentence-transformers/all-MiniLM-L6-v2"
+                )
+            except Exception as e:
+                print(f"Semantic cache: embedding model unavailable, "
+                      f"falling back to exact match. {e}")
+                self._embedding_model = False  # sentinel: failed load
+        return self._embedding_model or None
+
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        return query.strip().lower()
+
+    async def _semantic_lookup(self, query: str):
+        """
+        Cosine-similarity lookup over cached query embeddings.
+
+        Cache layout in Redis:
+          cache:semantic:index        -> JSON list of {h: query_hash} entries
+          cache:response:{query_hash} -> response text
+          cache:embedding:{query_hash}-> JSON list of floats (query embedding)
+
+        Returns (response, similarity) or (None, 0.0) on miss.
+        """
+        import json
+        import hashlib
+        import numpy as np
+
+        model = self._get_embedding_model()
+        if model is None or not self.redis_client:
+            return None, 0.0
+
+        try:
+            index_raw = await self.redis_client.get("cache:semantic:index")
+            if not index_raw:
+                return None, 0.0
+            index = json.loads(index_raw)[-self.semantic_max_entries:]
+
+            q_emb = np.asarray(model.encode([self._normalize_query(query)])[0])
+
+            best_hash, best_sim = None, -1.0
+            for entry in index:
+                h = entry.get("h")
+                if not h:
+                    continue
+                raw = await self.redis_client.get(f"cache:embedding:{h}")
+                if not raw:
+                    continue  # embedding expired; skip stale index entry
+                emb = np.asarray(json.loads(raw))
+                denom = (np.linalg.norm(q_emb) * np.linalg.norm(emb))
+                if denom == 0:
+                    continue
+                sim = float(np.dot(q_emb, emb) / denom)
+                if sim > best_sim:
+                    best_sim, best_hash = sim, h
+
+            if best_hash is not None and best_sim >= self.semantic_threshold:
+                response = await self.redis_client.get(f"cache:response:{best_hash}")
+                if response is not None:
+                    return response, best_sim
+            return None, 0.0
+        except Exception as e:
+            print(f"Semantic cache lookup failed: {e}")
+            return None, 0.0
+
     async def cache_response(self, query: str, response: str, ttl: int = 300):
-        """Cache high-confidence response in Redis."""
+        """Cache high-confidence response in Redis with a semantic index entry."""
         if self.redis_client:
             try:
                 import hashlib
-                query_hash = hashlib.md5(query.strip().lower().encode()).hexdigest()
+                import json
+
+                norm = self._normalize_query(query)
+                query_hash = hashlib.md5(norm.encode()).hexdigest()
                 key = f"cache:response:{query_hash}"
                 await self.redis_client.set(key, response, ex=ttl)
+
+                model = self._get_embedding_model()
+                if model is not None:
+                    emb = [float(x) for x in model.encode([norm])[0]]
+                    await self.redis_client.set(
+                        f"cache:embedding:{query_hash}",
+                        json.dumps(emb),
+                        ex=ttl,
+                    )
+                    index_raw = await self.redis_client.get("cache:semantic:index")
+                    try:
+                        index = json.loads(index_raw) if index_raw else []
+                    except Exception:
+                        index = []
+                    index = [e for e in index if e.get("h") != query_hash]
+                    index.append({"h": query_hash})
+                    await self.redis_client.set(
+                        "cache:semantic:index",
+                        json.dumps(index[-self.semantic_max_entries:]),
+                        ex=max(ttl, 3600),
+                    )
             except Exception as e:
                 print(f"Redis cache set failed: {e}")
 
     async def get_cached_response(self, query: str) -> Optional[str]:
-        """Retrieve response from Redis cache."""
+        """Retrieve response from Redis via semantic similarity (exact-match fallback)."""
         if self.redis_client:
             try:
                 import hashlib
                 from app.metrics.prometheus import redis_cache_hit_total, redis_cache_miss_total
-                
-                query_hash = hashlib.md5(query.strip().lower().encode()).hexdigest()
+
+                # 1. Semantic lookup first (higher hit rate).
+                if self._get_embedding_model() is not None:
+                    hit, _sim = await self._semantic_lookup(query)
+                    if hit is not None:
+                        redis_cache_hit_total.inc()
+                        return hit
+
+                # 2. Fallback / secondary: exact normalized match.
+                query_hash = hashlib.md5(self._normalize_query(query).encode()).hexdigest()
                 key = f"cache:response:{query_hash}"
                 cached = await self.redis_client.get(key)
-                
+
                 if cached:
                     redis_cache_hit_total.inc()
                     return cached
