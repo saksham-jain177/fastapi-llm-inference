@@ -104,6 +104,18 @@ class Orchestrator:
                     "confidence": 1.0,
                     "source": "redis"
                 })
+                # Interaction logging must stay symmetric across cache hits and
+                # misses: skipping log_interaction here silently drops every
+                # served-from-cache answer from the RLHF/calibration dataset
+                # (and from the semantic-cache feedback loop).
+                await collector.log_interaction(
+                    query=query,
+                    context="redis_cache",
+                    response=cached_resp,
+                    intent=domain,
+                    confidence=1.0,
+                    source="redis_cache",
+                )
                 return response_data
 
         context = ""
