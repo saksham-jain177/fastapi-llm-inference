@@ -131,18 +131,13 @@ class Orchestrator:
 
             gate = get_knowledge_gate()
             
-            # CRITICAL INSIGHT:
-            # For general queries, we have NO EVIDENCE until we search.
-            # The model can generate a draft, but that's not evidence—it's speculation.
-            # 
-            # Evidence sources:
-            # - Adapters (domain-specific knowledge) ← handled in Path A
-            # - RAG retrieval (external grounding) ← not yet available
-            # - Internal KB/docs ← not implemented
-            #
-            # Therefore: has_evidence = False for all general queries
-            
-            has_evidence = False
+            # Evidence-First: consult the internal KB before falling back to
+            # external search. The KB holds curated internal documents; a
+            # similarity-cleared match is real evidence.
+            from app.kb import get_internal_kb
+
+            kb = get_internal_kb()
+            has_evidence, kb_results = kb.retrieve(query)
             
             # DECIDE via Knowledge Gate (Evidence-First)
             # We pass epistemic_confidence=None because we haven't generated yet
@@ -182,7 +177,7 @@ class Orchestrator:
                 async def generate_wrapper(p, temperature=0.3, max_new_tokens=256):
                     return self.adapter_mgr.generate_with_adapter("base", p, temperature=temperature, max_new_tokens=max_new_tokens)
                 
-                logger.info("Evidence-backed path - checking epistemic confidence")
+                logger.info("Evidence-backed path (internal KB) - checking epistemic confidence")
                 draft_response, epistemic_conf = await estimator.estimate_confidence(query, generate_wrapper)
                 
                 # Re-check with epistemic confidence
@@ -198,7 +193,12 @@ class Orchestrator:
                         "mode": "model",
                         "response": final_response,
                         "confidence": epistemic_conf,
-                        "semantic_confidence": semantic_conf
+                        "semantic_confidence": semantic_conf,
+                        "evidence": "internal_kb",
+                        "kb_sources": [
+                            {"doc_id": r["doc_id"], "source": r["source"], "similarity": round(r["similarity"], 4)}
+                            for r in kb_results[:2]
+                        ],
                     })
                     gate_decision_total.labels(decision="allow", reason="evidence_backed").inc()
                 else:
